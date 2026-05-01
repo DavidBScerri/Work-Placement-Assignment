@@ -114,7 +114,7 @@ def fine_tune_model(
         gradient_accumulation_steps=4, # To fit in VRAM effectively
         per_device_eval_batch_size=batch_size,
         num_train_epochs=epochs,
-        warmup_ratio=0.1,
+        warmup_steps=0.1,
         logging_steps=10,
         load_best_model_at_end=True,
         metric_for_best_model="accuracy",
@@ -133,7 +133,7 @@ def fine_tune_model(
         data_collator=collate_fn,
         train_dataset=train_ds,
         eval_dataset=test_ds,
-        tokenizer=processor,
+        processing_class=processor,
         compute_metrics=compute_metrics,
     )
     
