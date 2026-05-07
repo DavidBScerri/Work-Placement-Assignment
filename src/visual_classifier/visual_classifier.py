@@ -119,7 +119,6 @@ def fine_tune_model(
         load_best_model_at_end=True,
         metric_for_best_model="accuracy",
         push_to_hub=False,
-        use_mps_device=True if torch.backends.mps.is_available() else False,
     )
     
     def collate_fn(examples):
