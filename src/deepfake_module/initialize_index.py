@@ -10,7 +10,7 @@ from PIL import Image
 
 def build_landmark_index(dataset_name="zguo0525/google-landmarks-v2-mini",
                          model_name="facebook/dinov2-base",
-                         output_dir="models"):
+                         output_dir="src/deepfake_module/models"):
     """
     Downloads the Google Landmarks dataset, extracts DINOv2 embeddings,
     and builds a FAISS index for retrieval.
