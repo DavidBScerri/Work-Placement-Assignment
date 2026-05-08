@@ -1,6 +1,6 @@
 #/opt/homebrew/bin/python3 -m pip install ipykernel -U --user --break-system-packages 
 #/opt/homebrew/bin/python3 -m pip install -r requirements.txt --break-system-packages
-
+#/opt/homebrew/bin/python3 -m pip install faiss-cpu --break-system-packages
 
 
 pydantic>=2.0.0

@@ -4,14 +4,18 @@ from transformers import AutoImageProcessor, AutoModelForImageClassification, Tr
 from datasets import load_dataset
 import birder
 import numpy as np
+import faiss
+import json
+from PIL import Image
 
 
 class DeepfakeClassifier:
     def __init__(self,
                  face_model_name="prithivMLmods/deepfake-detector-model-v1",
                  scene_model_name="birder-project/rope_vit_reg4_b14_capi-places365",
-                 landmark_model_path="./fine_tuned_model",
-                 landmark_delta_path=None):
+                 landmark_model_name="facebook/dinov2-base",
+                 index_path="models/landmarks_index.faiss",
+                 metadata_path="models/landmarks_metadata.json"):
         """
         Initializes the Deepfake Classifier with multiple sub-models:
           - A FaceForensics model for face manipulation detection.
@@ -21,14 +25,9 @@ class DeepfakeClassifier:
         Args:
             face_model_name:      HuggingFace model ID for the face forensics detector.
             scene_model_name:     Birder model name for scene/Places365 classification.
-            landmark_model_path:  Local path (or HF model ID) for the fine-tuned DINOv2
-                                  landmark model. Defaults to ``./fine_tuned_model``.
-                                  Pass ``None`` to skip loading the landmark model.
-            landmark_delta_path:  Optional path to a .pt delta file produced by
-                                  save_weight_delta(). When provided, the base DINOv2
-                                  model is loaded and the stored weight differences are
-                                  applied on top, avoiding the need to store a full
-                                  model file in the repository.
+            landmark_model_name:  HuggingFace model ID for the landmark embedding model (e.g. DINOv2).
+            index_path:           Path to the FAISS index file.
+            metadata_path:        Path to the landmark metadata JSON file.
         """
         self.device = torch.device(
             "mps" if torch.backends.mps.is_available()
@@ -65,24 +64,14 @@ class DeepfakeClassifier:
             self.scene_model.eval()
             self.scene_info = None
 
-        # ── 3. Landmark Detection Model (fine-tuned DINOv2) ──────────────────
-        self.landmark_model_path = landmark_model_path
-        self.landmark_processor = AutoImageProcessor.from_pretrained("facebook/dinov2-base")
-
-        if landmark_delta_path is not None:
-            # Delta mode: load base model + apply weight delta
-            print(f"Loading DINOv2 base model and applying landmark delta from: {landmark_delta_path}")
-            self.landmark_model = AutoModelForImageClassification.from_pretrained("facebook/dinov2-base").to(self.device)
-            load_weight_delta(self.landmark_model, landmark_delta_path, device=self.device)
-            print("Landmark delta applied successfully.")
-            self.landmark_model.eval()
-        elif landmark_model_path:
-            print(f"Loading fine-tuned Landmark model from: {landmark_model_path}")
-            self.landmark_model = AutoModelForImageClassification.from_pretrained(landmark_model_path).to(self.device)
-            self.landmark_model.eval()
-        else:
-            print("Landmark model path not provided. Skipping landmark model loading.")
-            self.landmark_model = None
+        # ── 3. Landmark Retrieval Model (DINOv2 + FAISS) ─────────────────────
+        print(f"Loading Landmark Retrieval model: {landmark_model_name}")
+        self.landmark_index = LandmarkIndex(
+            model_name=landmark_model_name,
+            index_path=index_path,
+            metadata_path=metadata_path,
+            device=self.device
+        )
 
     # ── Inference helpers ────────────────────────────────────────────────────
 
@@ -134,28 +123,19 @@ class DeepfakeClassifier:
 
         return {"label": label, "confidence": round(max_prob.item(), 4)}
 
-    def predict_landmark(self, image):
+    def predict_landmark(self, image, top_k=10, similarity_threshold=0.5):
         """
-        Identifies landmarks using the fine-tuned DINOv2 model.
+        Identifies landmarks using a retrieval-based approach with DINOv2 and FAISS.
 
         Args:
-            image: A PIL Image object.
+            image:                A PIL Image object.
+            top_k:                Number of nearest neighbors to retrieve.
+            similarity_threshold: Minimum similarity score to consider a match.
 
         Returns:
-            dict with keys ``label`` and ``confidence``
-            (or a ``message`` key if the model is not loaded).
+            dict with keys ``label``, ``confidence``, and optionally ``top_matches``.
         """
-        if not self.landmark_model:
-            return {"label": "N/A", "confidence": 0.0, "message": "Landmark model not loaded."}
-
-        inputs = self.landmark_processor(images=image, return_tensors="pt").to(self.device)
-        with torch.no_grad():
-            outputs = self.landmark_model(**inputs)
-            probs = torch.nn.functional.softmax(outputs.logits, dim=-1)
-
-        max_prob, idx = torch.max(probs, dim=-1)
-        label = self.landmark_model.config.id2label[idx.item()]
-        return {"label": label, "confidence": round(max_prob.item(), 4)}
+        return self.landmark_index.search(image, top_k=top_k, similarity_threshold=similarity_threshold)
 
     def predict(self, image, visual_classifier=None, threshold=0.5):
         """
@@ -222,223 +202,86 @@ class DeepfakeClassifier:
 
 
 # ---------------------------------------------------------------------------
-# Weight-delta helpers
+# ---------------------------------------------------------------------------
+# Landmark Retrieval Helper Class
 # ---------------------------------------------------------------------------
 
-def save_weight_delta(
-    fine_tuned_model,
-    base_model_name="facebook/dinov2-base",
-    output_path="./fine_tuned_model_delta/weight_delta.pt",
-    threshold: float = 1e-9,
-):
-    """
-    Saves weight differences between the fine-tuned model and the base model
-    using per-tensor int8 quantisation.
+class LandmarkIndex:
+    def __init__(self,
+                 model_name="facebook/dinov2-base",
+                 index_path="models/landmarks_index.faiss",
+                 metadata_path="models/landmarks_metadata.json",
+                 device=None):
+        from transformers import AutoModel
+        self.device = device or torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+        self.processor = AutoImageProcessor.from_pretrained(model_name)
+        self.model = AutoModel.from_pretrained(model_name).to(self.device)
+        self.model.eval()
 
-    Encoding:
-        For each parameter tensor whose L∞ change exceeds `threshold`:
-            scale  = max_abs_diff / 127.0
-            stored = round(diff / scale).clamp(-127, 127)  [int8]
-        Reconstruction (done in load_weight_delta):
-            diff   ≈ stored.float() * scale
+        self.index_path = index_path
+        self.metadata_path = metadata_path
+        self.index = None
+        self.metadata = None
 
-    Args:
-        fine_tuned_model: The trained model object (in memory after fine_tune_model()).
-        base_model_name:  HuggingFace model ID of the base model used for training.
-        output_path:      Where to write the .pt delta file.
-        threshold:        Tensors whose L∞ change is below this are skipped (pure zeros).
-    Returns:
-        (output_path, size_mb)
-    """
-    print(f"Loading base model '{base_model_name}' to compute delta...")
-    base_model = AutoModelForImageClassification.from_pretrained(base_model_name)
-    base_state = base_model.state_dict()
-    ft_state   = fine_tuned_model.state_dict()
-
-    delta     = {}
-    unchanged = []
-    for key in ft_state:
-        ft_param   = ft_state[key].cpu().float()
-        base_param = base_state[key].cpu().float() if key in base_state else torch.zeros_like(ft_param)
-        diff       = ft_param - base_param
-        max_abs    = diff.abs().max().item()
-        if max_abs < threshold:
-            unchanged.append(key)
-            continue
-        # Per-tensor int8 quantisation — 4× smaller than float32, 2× smaller than float16
-        scale = max_abs / 127.0
-        quant = (diff / scale).round().clamp(-127, 127).to(torch.int8)
-        delta[key] = {"q": quant, "s": scale}
-
-    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-    torch.save(
-        {"base_model": base_model_name, "dtype": "int8", "delta": delta},
-        output_path,
-    )
-
-    size_mb = os.path.getsize(output_path) / 1024 / 1024
-    print(f"Delta saved → '{output_path}'")
-    print(f"  Changed parameters : {len(delta)}")
-    print(f"  Unchanged (skipped): {len(unchanged)}")
-    print(f"  File size          : {size_mb:.2f} MB")
-    return output_path, size_mb
-
-
-def load_weight_delta(model, delta_path, device=None):
-    """
-    Applies a weight delta (produced by save_weight_delta) to an already-loaded
-    base model, modifying it in-place.
-
-    Supports both the int8-quantised format ({"q": int8_tensor, "s": scale})
-    and the legacy float16 format (raw half-precision tensor) for backwards
-    compatibility.
-
-    Args:
-        model:      The base model instance — weights are updated in-place.
-        delta_path: Path to the .pt file created by save_weight_delta().
-        device:     torch.device to map tensors onto (defaults to CPU).
-    """
-    checkpoint = torch.load(delta_path, map_location=device or "cpu", weights_only=False)
-    delta      = checkpoint["delta"]
-    fmt        = checkpoint.get("dtype", "float16")
-    state      = model.state_dict()
-
-    for key, payload in delta.items():
-        if key not in state:
-            continue
-        if fmt == "int8" and isinstance(payload, dict):
-            # Dequantise: diff ≈ q * scale
-            diff = payload["q"].float() * payload["s"]
+        if os.path.exists(index_path) and os.path.exists(metadata_path):
+            self.load()
         else:
-            # Legacy float16 delta
-            diff = payload.float()
-        state[key] = (state[key].float() + diff).to(state[key].dtype)
+            print(f"Warning: Landmark index not found at {index_path}. "
+                  "Please run the initialization script to build the FAISS index.")
 
-    model.load_state_dict(state)
+    def load(self):
+        print(f"Loading FAISS index from {self.index_path}...")
+        self.index = faiss.read_index(self.index_path)
+        with open(self.metadata_path, 'r') as f:
+            self.metadata = json.load(f)
+        print("Landmark index loaded successfully.")
 
+    def search(self, image, top_k=10, similarity_threshold=0.5):
+        """
+        Searches the FAISS index for the closest landmarks.
+        """
+        if self.index is None:
+            return {"label": "N/A", "confidence": 0.0, "message": "Index not loaded."}
 
-# ---------------------------------------------------------------------------
-# Training helpers
-# ---------------------------------------------------------------------------
+        inputs = self.processor(images=image, return_tensors="pt").to(self.device)
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+            # DINOv2 CLS token
+            embedding = outputs.last_hidden_state[:, 0, :]
+            embedding = torch.nn.functional.normalize(embedding, p=2, dim=1)
+            embedding_np = embedding.cpu().numpy().astype('float32')
 
-def compute_metrics(eval_pred):
-    """
-    Computes accuracy, precision, recall, and F1 for the DINOv2 landmark
-    fine-tuning task. Compatible with the HuggingFace Trainer
-    ``compute_metrics`` API.
-    """
-    from sklearn.metrics import accuracy_score, precision_recall_fscore_support
-    logits, labels = eval_pred
-    predictions = np.argmax(logits, axis=-1)
+        distances, indices = self.index.search(embedding_np, top_k)
 
-    precision, recall, f1, _ = precision_recall_fscore_support(labels, predictions, average='weighted')
-    acc = accuracy_score(labels, predictions)
+        # Aggregate matches by landmark ID
+        hits = {}
+        for dist, idx in zip(distances[0], indices[0]):
+            if idx == -1:
+                continue
+            label_idx = self.metadata["labels"][idx]
+            label_name = self.metadata["class_names"][label_idx]
+            if label_name not in hits:
+                hits[label_name] = []
+            hits[label_name].append(float(dist))
 
-    return {
-        'accuracy': acc,
-        'f1': f1,
-        'precision': precision,
-        'recall': recall
-    }
+        if not hits:
+            return {"label": "None", "confidence": 0.0}
 
+        # Return the best landmark candidate based on average similarity of its matches
+        best_label = None
+        max_avg_sim = -1.0
+        for label, sims in hits.items():
+            avg_sim = sum(sims) / len(sims)
+            if avg_sim > max_avg_sim:
+                max_avg_sim = avg_sim
+                best_label = label
 
-def fine_tune_model(
-    base_model_name="facebook/dinov2-base",
-    dataset_name="zguo0525/google-landmarks-v2-mini",
-    output_dir="./fine_tuned_model",
-    epochs=3,
-    batch_size=8,
-    learning_rate=5e-5
-):
-    """
-    Fine-tunes DINOv2 on a landmark classification dataset and saves the
-    best checkpoint to ``output_dir``.
+        if max_avg_sim < similarity_threshold:
+            return {"label": "Unknown", "confidence": round(max_avg_sim, 4)}
 
-    Args:
-        base_model_name: HuggingFace model ID for the DINOv2 base model.
-        dataset_name:    HuggingFace dataset ID for landmark images.
-        output_dir:      Directory where the fine-tuned model is saved.
-        epochs:          Number of training epochs (default: 3).
-        batch_size:      Per-device training/eval batch size (default: 8).
-        learning_rate:   AdamW learning rate (default: 5e-5).
-
-    Returns:
-        Tuple of (model, processor) after training.
-    """
-    print(f"Loading dataset: {dataset_name}")
-    dataset = load_dataset(dataset_name)
-
-    num_classes = len(dataset['train'].features['label'].names)
-    label_names = dataset['train'].features['label'].names
-    print(f"Number of landmark classes: {num_classes}")
-
-    processor = AutoImageProcessor.from_pretrained(base_model_name)
-
-    def transforms(examples):
-        inputs = processor([img.convert("RGB") for img in examples["image"]], return_tensors="pt")
-        inputs["labels"] = examples["label"]
-        return inputs
-
-    # Build train/eval splits
-    if "test" in dataset:
-        train_ds = dataset["train"]
-        eval_ds = dataset["test"]
-    else:
-        split = dataset["train"].train_test_split(test_size=0.1)
-        train_ds = split["train"]
-        eval_ds = split["test"]
-
-    print("Applying transformations...")
-    train_ds.set_transform(transforms)
-    eval_ds.set_transform(transforms)
-
-    model = AutoModelForImageClassification.from_pretrained(
-        base_model_name,
-        num_labels=num_classes,
-        id2label={str(i): name for i, name in enumerate(label_names)},
-        label2id={name: i for i, name in enumerate(label_names)},
-        ignore_mismatched_sizes=True
-    )
-
-    training_args = TrainingArguments(
-        output_dir=output_dir,
-        remove_unused_columns=False,
-        eval_strategy="epoch",
-        save_strategy="epoch",
-        learning_rate=learning_rate,
-        per_device_train_batch_size=batch_size,
-        gradient_accumulation_steps=4,
-        per_device_eval_batch_size=batch_size,
-        num_train_epochs=epochs,
-        warmup_steps=0.1,
-        logging_steps=10,
-        load_best_model_at_end=True,
-        metric_for_best_model="accuracy",
-        push_to_hub=False,
-    )
-
-    def collate_fn(examples):
-        pixel_values = torch.stack([example["pixel_values"] for example in examples])
-        labels = torch.tensor([example["labels"] for example in examples])
-        return {"pixel_values": pixel_values, "labels": labels}
-
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        data_collator=collate_fn,
-        train_dataset=train_ds,
-        eval_dataset=eval_ds,
-        processing_class=processor,
-        compute_metrics=compute_metrics,
-    )
-
-    print("Starting training...")
-    train_results = trainer.train()
-
-    print("Saving model...")
-    trainer.save_model()
-    trainer.log_metrics("train", train_results.metrics)
-    trainer.save_metrics("train", train_results.metrics)
-    trainer.save_state()
-
-    return model, processor
+        return {
+            "label": best_label,
+            "confidence": round(max_avg_sim, 4),
+            "matches_count": len(hits[best_label]),
+            "all_matches": hits
+        }
