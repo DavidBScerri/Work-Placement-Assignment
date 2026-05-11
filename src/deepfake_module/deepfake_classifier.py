@@ -7,6 +7,7 @@ import numpy as np
 import faiss
 import json
 from PIL import Image
+from facenet_pytorch import MTCNN
 
 
 class DeepfakeClassifier:
@@ -37,6 +38,7 @@ class DeepfakeClassifier:
 
         # ── 1. Face Forensics Model ──────────────────────────────────────────
         print(f"Loading Face Forensics model: {face_model_name}")
+        self.mtcnn = MTCNN(keep_all=True, device='cpu')
         try:
             self.face_processor = AutoImageProcessor.from_pretrained(face_model_name)
         except Exception:
@@ -83,8 +85,18 @@ class DeepfakeClassifier:
             image: A PIL Image object.
 
         Returns:
-            dict with keys ``label``, ``confidence``, and ``probs``.
+            dict with keys ``label``, ``confidence``, ``probs``, and ``face_certainty``.
         """
+        # Detect face first using MTCNN
+        boxes, probs = self.mtcnn.detect(image)
+        if boxes is None or len(boxes) == 0:
+            return {"label": "No Face", "confidence": 0.0, "probs": [0.0, 0.0], "face_certainty": 0.0}
+        
+        face_certainty = float(np.max(probs))
+        if face_certainty < 0.90:
+            return {"label": "No Face", "confidence": 0.0, "probs": [0.0, 0.0], "face_certainty": round(face_certainty, 4)}
+
+        # Run face model if face detected with high certainty
         inputs = self.face_processor(images=image, return_tensors="pt").to(self.device)
         with torch.no_grad():
             outputs = self.face_model(**inputs)
@@ -92,7 +104,7 @@ class DeepfakeClassifier:
 
         max_prob, idx = torch.max(probs, dim=-1)
         label = self.face_model.config.id2label[idx.item()]
-        return {"label": label, "confidence": round(max_prob.item(), 4), "probs": probs[0].tolist()}
+        return {"label": label, "confidence": round(max_prob.item(), 4), "probs": probs[0].tolist(), "face_certainty": round(face_certainty, 4)}
 
     def predict_scene(self, image):
         """
@@ -178,24 +190,29 @@ class DeepfakeClassifier:
             scene_res = self.predict_scene(image)
             landmark_res = self.predict_landmark(image)
 
-            deepfake_score = (
-                face_res["confidence"]
-                if face_res["label"].lower() == "fake"
-                else (1 - face_res["confidence"])
-            )
+            face_fake_score = 0.0
+            if face_res["label"].lower() == "fake":
+                face_fake_score = face_res["confidence"]
+            elif face_res["label"].lower() == "real":
+                face_fake_score = 1.0 - face_res["confidence"]
+            
+            landmark_score = landmark_res.get("confidence", 0.0)
+            
+            final_prediction_score = max(face_fake_score, landmark_score)
 
             results["deepfake_analysis"] = {
-                "deepfake_confidence": round(deepfake_score, 4),
                 "face_analysis": face_res,
                 "scene_analysis": scene_res,
                 "landmark_analysis": landmark_res
             }
+            results["final_prediction_score"] = round(final_prediction_score, 4)
             results["final_decision"] = (
-                "Potential Deepfake"
-                if deepfake_score > 0.5
+                "High possibility of being a deepfake"
+                if final_prediction_score > 0.5
                 else "Likely AI Generated (Non-Deepfake)"
             )
         else:
+            results["final_prediction_score"] = 0.0
             results["final_decision"] = "Likely Real / Low AI Confidence"
 
         return results
