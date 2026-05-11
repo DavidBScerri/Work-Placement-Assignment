@@ -209,11 +209,35 @@ def fine_tune_model(
     Fine-tunes the image classification model on the provided dataset.
     """
     print(f"Loading dataset: {dataset_name}")
-    dataset = load_dataset(dataset_name)
-    
-    # Extract train and test sets
-    train_ds = dataset['train']
-    test_ds = dataset['test']
+    if "GenImage" in dataset_name:
+        from datasets import interleave_datasets
+        print("Using streaming mode for GenImage to preserve local storage.")
+        dataset = load_dataset(dataset_name, streaming=True)
+        
+        def map_label(example):
+            path = example.get("image_path", "").lower()
+            # dima806 model: 0 is human/real, 1 is AI-generated
+            example["label"] = 0 if "/nature/" in path or "/real/" in path else 1
+            return example
+            
+        mapped_ds = dataset['train'].map(map_label)
+        
+        real_stream = mapped_ds.filter(lambda x: x["label"] == 0)
+        fake_stream = mapped_ds.filter(lambda x: x["label"] == 1)
+        
+        balanced_stream = interleave_datasets([real_stream, fake_stream])
+        
+        # Take 50,000 unique images for training
+        train_ds = balanced_stream.take(50000)
+        # Skip 50,000 and take 20,000 for testing
+        test_ds = balanced_stream.skip(50000).take(20000)
+        
+        max_train_samples = 50000
+    else:
+        dataset = load_dataset(dataset_name)
+        train_ds = dataset['train']
+        test_ds = dataset['test']
+        max_train_samples = len(train_ds)
     
     processor = AutoImageProcessor.from_pretrained(model_name)
     model = AutoModelForImageClassification.from_pretrained(model_name, ignore_mismatched_sizes=True)
@@ -223,24 +247,41 @@ def fine_tune_model(
     # Assuming dataset has 'image' and 'label' columns.
     
     def transforms(examples):
-        inputs = processor([img.convert("RGB") for img in examples["image"]], return_tensors="pt")
+        # Support both batched lists or individual dicts
+        images = examples["image"] if isinstance(examples["image"], list) else [examples["image"]]
+        images = [img.convert("RGB") for img in images]
+        
+        inputs = processor(images, return_tensors="pt")
         inputs["labels"] = examples["label"]
         return inputs
         
     print("Applying transformations...")
-    train_ds.set_transform(transforms)
-    test_ds.set_transform(transforms)
+    if "GenImage" in dataset_name:
+        cols_to_remove = ["image", "image_path", "md5", "width", "height"]
+        train_ds = train_ds.map(transforms, batched=True, batch_size=batch_size, remove_columns=cols_to_remove)
+        test_ds = test_ds.map(transforms, batched=True, batch_size=batch_size, remove_columns=cols_to_remove)
+    else:
+        train_ds.set_transform(transforms)
+        test_ds.set_transform(transforms)
+    
+    # Calculate max steps for streaming datasets
+    gradient_accumulation_steps = 4
+    steps_per_epoch = max_train_samples // (batch_size * gradient_accumulation_steps)
+    max_steps = steps_per_epoch * epochs if "GenImage" in dataset_name else -1
     
     training_args = TrainingArguments(
         output_dir=output_dir,
         remove_unused_columns=False,
-        eval_strategy="epoch",
-        save_strategy="epoch",
+        eval_strategy="steps" if "GenImage" in dataset_name else "epoch",
+        eval_steps=steps_per_epoch if "GenImage" in dataset_name else None,
+        save_strategy="steps" if "GenImage" in dataset_name else "epoch",
+        save_steps=steps_per_epoch if "GenImage" in dataset_name else None,
         learning_rate=learning_rate,
         per_device_train_batch_size=batch_size,
-        gradient_accumulation_steps=4, # To fit in VRAM effectively
+        gradient_accumulation_steps=gradient_accumulation_steps, # To fit in VRAM effectively
         per_device_eval_batch_size=batch_size,
         num_train_epochs=epochs,
+        max_steps=max_steps,
         warmup_steps=0.1,
         logging_steps=10,
         load_best_model_at_end=True,
@@ -249,7 +290,14 @@ def fine_tune_model(
     )
     
     def collate_fn(examples):
-        pixel_values = torch.stack([example["pixel_values"] for example in examples])
+        # Handle case where pixel_values might be lists depending on mapping
+        pixel_values = []
+        for example in examples:
+            pv = example["pixel_values"]
+            if isinstance(pv, list):
+                pv = torch.tensor(pv)
+            pixel_values.append(pv)
+        pixel_values = torch.stack(pixel_values)
         labels = torch.tensor([example["labels"] for example in examples])
         return {"pixel_values": pixel_values, "labels": labels}
     
@@ -273,4 +321,25 @@ def fine_tune_model(
     trainer.save_state()
     
     return model, processor
+
+def get_genimage_test_dataset():
+    """
+    Returns the streaming test dataset for GenImage, matching the split logic
+    used during fine-tuning (skip 50000, take 20000).
+    """
+    from datasets import load_dataset, interleave_datasets
+    dataset = load_dataset("nebula/GenImage-arrow", streaming=True)
+    
+    def map_label(example):
+        path = example.get("image_path", "").lower()
+        example["label"] = 0 if "/nature/" in path or "/real/" in path else 1
+        return example
+        
+    mapped_ds = dataset['train'].map(map_label)
+    real_stream = mapped_ds.filter(lambda x: x["label"] == 0)
+    fake_stream = mapped_ds.filter(lambda x: x["label"] == 1)
+    
+    balanced_stream = interleave_datasets([real_stream, fake_stream])
+    test_ds = balanced_stream.skip(50000).take(20000)
+    return test_ds
 
