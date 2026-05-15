@@ -119,8 +119,8 @@ def save_weight_delta(
     delta     = {}
     unchanged = []
     for key in ft_state:
-        ft_param   = ft_state[key].float()
-        base_param = base_state[key].float() if key in base_state else torch.zeros_like(ft_param)
+        ft_param   = ft_state[key].float().cpu()
+        base_param = base_state[key].float().cpu() if key in base_state else torch.zeros_like(ft_param)
         diff       = ft_param - base_param
         max_abs    = diff.abs().max().item()
         if max_abs < threshold:
