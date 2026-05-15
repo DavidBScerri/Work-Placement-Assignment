@@ -113,14 +113,17 @@ def save_weight_delta(
     """
     print(f"Loading base model '{base_model_name}' to compute delta...")
     base_model = AutoModelForImageClassification.from_pretrained(base_model_name)
-    base_state = base_model.state_dict()
-    ft_state   = fine_tuned_model.state_dict()
+
+    # Move both state dicts to CPU upfront to avoid any device mismatch
+    ft_state   = {k: v.float().cpu() for k, v in fine_tuned_model.state_dict().items()}
+    base_state = {k: v.float().cpu() for k, v in base_model.state_dict().items()}
+    del base_model  # free memory
 
     delta     = {}
     unchanged = []
     for key in ft_state:
-        ft_param   = ft_state[key].float().cpu()
-        base_param = base_state[key].float().cpu() if key in base_state else torch.zeros_like(ft_param)
+        ft_param   = ft_state[key]
+        base_param = base_state[key] if key in base_state else torch.zeros_like(ft_param)
         diff       = ft_param - base_param
         max_abs    = diff.abs().max().item()
         if max_abs < threshold:
