@@ -10,7 +10,8 @@ This module is imported by the notebook; all heavy lifting lives here so
 the notebook stays beginner-friendly.
 """
 
-import os, json, torch, numpy as np
+import os, json, io, torch, numpy as np
+from PIL import Image
 from datasets import load_dataset, Dataset, DatasetDict
 from transformers import (
     AutoImageProcessor,
@@ -195,8 +196,14 @@ def make_transform(processor):
         images = examples["image"]
         if not isinstance(images, list):
             images = [images]
-        images = [img.convert("RGB") for img in images]
-        inputs = processor(images, return_tensors="pt")
+        # Handle raw bytes (e.g. GenImage) as well as PIL Image objects
+        converted = []
+        for img in images:
+            if isinstance(img, bytes):
+                img = Image.open(io.BytesIO(img))
+            img = img.convert("RGB")
+            converted.append(img)
+        inputs = processor(converted, return_tensors="pt")
         inputs["labels"] = examples["label"]
         return inputs
     return _transform
@@ -253,7 +260,7 @@ def run_training_stage(
         per_device_eval_batch_size=batch_size,
         gradient_accumulation_steps=4,
         num_train_epochs=epochs,
-        warmup_ratio=0.1,
+        warmup_steps=50,
         logging_steps=10,
         load_best_model_at_end=True,
         metric_for_best_model="accuracy",
