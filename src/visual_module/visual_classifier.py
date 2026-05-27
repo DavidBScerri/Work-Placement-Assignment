@@ -168,7 +168,14 @@ def load_weight_delta(model, delta_path, device=None):
     state      = model.state_dict()
 
     for key, payload in delta.items():
-        if key not in state:
+        # Backward compatibility for legacy sequential classifier head keys
+        target_key = key
+        if key == "classifier.1.weight":
+            target_key = "classifier.weight"
+        elif key == "classifier.1.bias":
+            target_key = "classifier.bias"
+
+        if target_key not in state:
             continue
         if fmt == "int8" and isinstance(payload, dict):
             # Dequantise: diff ≈ q * scale
@@ -176,7 +183,7 @@ def load_weight_delta(model, delta_path, device=None):
         else:
             # Legacy float16 delta
             diff = payload.float()
-        state[key] = (state[key].float() + diff).to(state[key].dtype)
+        state[target_key] = (state[target_key].float() + diff).to(state[target_key].dtype)
 
     model.load_state_dict(state)
 

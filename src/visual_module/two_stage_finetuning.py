@@ -116,13 +116,6 @@ def load_model_from(source="base", device=None):
         model_id, ignore_mismatched_sizes=True
     ).to(device)
 
-    # Always re-attach the dropout classifier head so every run starts
-    # with a consistent architecture, regardless of source.
-    model.classifier = torch.nn.Sequential(
-        torch.nn.Dropout(0.3),
-        torch.nn.Linear(model.config.hidden_size, model.config.num_labels),
-    )
-    model = model.to(device)
 
     n_params = sum(p.numel() for p in model.parameters())
     print(f"✅  Model loaded  –  {n_params:,} parameters  (device: {device})")
