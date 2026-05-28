@@ -1,0 +1,1761 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Seeing through Deepfakes</title>
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+  
+  <style>
+    :root {
+      --bg-main: #0f172a;       /* slate-900 */
+      --bg-sidebar: #020617;    /* slate-950 */
+      --bg-card: rgba(30, 41, 59, 0.7); /* slate-800 with transparency */
+      --bg-card-hover: rgba(30, 41, 59, 0.9);
+      --border-color: rgba(255, 255, 255, 0.08);
+      --text-primary: #f8fafc;   /* slate-50 */
+      --text-secondary: #94a3b8; /* slate-400 */
+      --text-muted: #64748b;     /* slate-500 */
+      
+      --color-real: #10b981;      /* emerald-500 */
+      --color-real-bg: rgba(16, 185, 129, 0.1);
+      --color-real-border: rgba(16, 185, 129, 0.3);
+      
+      --color-ai: #f59e0b;        /* amber-500 */
+      --color-ai-bg: rgba(245, 158, 11, 0.1);
+      --color-ai-border: rgba(245, 158, 11, 0.3);
+      
+      --color-df: #ef4444;        /* red-500 */
+      --color-df-bg: rgba(239, 68, 68, 0.1);
+      --color-df-border: rgba(239, 68, 68, 0.3);
+      
+      --accent: #6366f1;          /* indigo-500 */
+      --accent-hover: #4f46e5;
+      
+      --transition-speed: 0.2s;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: var(--bg-main);
+      color: var(--text-primary);
+      height: 100vh;
+      display: flex;
+      overflow: hidden;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    /* --- Sidebar --- */
+    .sidebar {
+      width: 340px;
+      background-color: var(--bg-sidebar);
+      border-right: 1px solid var(--border-color);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      z-index: 10;
+    }
+
+    .sidebar-header {
+      padding: 24px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .sidebar-title {
+      font-family: 'Outfit', sans-serif;
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      background: linear-gradient(135deg, #a5b4fc, #6366f1);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 4px;
+    }
+
+    .sidebar-subtitle {
+      font-size: 11px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      font-weight: 600;
+    }
+
+    .sidebar-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px 24px;
+    }
+
+    .sidebar-section-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 12px;
+      margin-top: 24px;
+    }
+    .sidebar-section-title:first-child {
+      margin-top: 0;
+    }
+
+    .btn-new-chat {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      width: 100%;
+      background-color: transparent;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 8px;
+      color: var(--text-primary);
+      padding: 10px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all var(--transition-speed);
+      margin-bottom: 16px;
+    }
+    .btn-new-chat:hover {
+      background-color: rgba(255, 255, 255, 0.05);
+      border-color: rgba(255, 255, 255, 0.3);
+    }
+
+    /* Config Controls */
+    .control-group {
+      margin-bottom: 16px;
+    }
+
+    .control-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-bottom: 6px;
+      font-weight: 500;
+    }
+
+    .control-val {
+      font-family: 'Fira Code', monospace;
+      color: var(--text-primary);
+      font-weight: 600;
+    }
+
+    select.input-control {
+      width: 100%;
+      background-color: #0f172a;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 6px;
+      color: var(--text-primary);
+      padding: 8px 12px;
+      font-size: 13px;
+      outline: none;
+      cursor: pointer;
+      transition: border-color var(--transition-speed);
+    }
+    select.input-control:focus {
+      border-color: var(--accent);
+    }
+
+    input[type="range"].slider-control {
+      width: 100%;
+      -webkit-appearance: none;
+      height: 4px;
+      border-radius: 2px;
+      background: rgba(255, 255, 255, 0.1);
+      outline: none;
+      margin: 8px 0;
+    }
+    input[type="range"].slider-control::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: var(--accent);
+      cursor: pointer;
+      transition: transform 0.1s ease;
+    }
+    input[type="range"].slider-control::-webkit-slider-thumb:hover {
+      transform: scale(1.2);
+    }
+
+    /* History List */
+    .history-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .history-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all var(--transition-speed);
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      border: 1px solid transparent;
+    }
+    .history-item:hover {
+      background-color: rgba(255, 255, 255, 0.05);
+      color: var(--text-primary);
+    }
+    .history-item.active {
+      background-color: rgba(99, 102, 241, 0.15);
+      color: var(--text-primary);
+      border-color: rgba(99, 102, 241, 0.25);
+    }
+
+    .history-item-icon {
+      flex-shrink: 0;
+      width: 16px;
+      height: 16px;
+      opacity: 0.7;
+    }
+
+    .history-item-text {
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* --- Main Container --- */
+    .main-container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      background-color: var(--bg-main);
+    }
+
+    .main-header {
+      height: 60px;
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      font-size: 13px;
+      color: var(--text-secondary);
+      background-color: rgba(15, 23, 42, 0.8);
+      backdrop-filter: blur(12px);
+      z-index: 5;
+    }
+
+    .active-config-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background-color: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border-color);
+      padding: 4px 10px;
+      border-radius: 9999px;
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.02em;
+    }
+
+    /* Chat workspace */
+    .workspace {
+      flex: 1;
+      overflow-y: auto;
+      padding: 40px 24px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .content-width {
+      width: 100%;
+      max-width: 800px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Empty state (ChatGPT layout) */
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      margin-top: 8vh;
+      width: 100%;
+    }
+
+    .logo-container {
+      width: 64px;
+      height: 64px;
+      border-radius: 16px;
+      background: linear-gradient(135deg, var(--accent), #4f46e5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 24px;
+      box-shadow: 0 10px 25px -5px rgba(99, 102, 241, 0.4);
+    }
+
+    .logo-icon {
+      width: 32px;
+      height: 32px;
+      color: white;
+    }
+
+    .empty-title {
+      font-family: 'Outfit', sans-serif;
+      font-size: 32px;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      margin-bottom: 12px;
+    }
+
+    .empty-subtitle {
+      font-size: 15px;
+      color: var(--text-secondary);
+      max-width: 480px;
+      margin-bottom: 40px;
+      line-height: 1.6;
+    }
+
+    /* Drop Zone */
+    .drop-zone {
+      width: 100%;
+      max-width: 600px;
+      background-color: var(--bg-card);
+      border: 2px dashed rgba(255, 255, 255, 0.15);
+      border-radius: 16px;
+      padding: 48px 32px;
+      cursor: pointer;
+      transition: all var(--transition-speed) ease;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(8px);
+      box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+    }
+    .drop-zone:hover, .drop-zone.dragover {
+      border-color: var(--accent);
+      background-color: var(--bg-card-hover);
+      box-shadow: 0 10px 30px -10px rgba(99, 102, 241, 0.2);
+      transform: translateY(-2px);
+    }
+
+    .drop-icon-wrapper {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background-color: rgba(255, 255, 255, 0.05);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 16px;
+      color: var(--text-secondary);
+      transition: all var(--transition-speed);
+    }
+    .drop-zone:hover .drop-icon-wrapper {
+      color: var(--text-primary);
+      background-color: rgba(99, 102, 241, 0.1);
+    }
+
+    .drop-text-primary {
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text-primary);
+      margin-bottom: 4px;
+    }
+
+    .drop-text-secondary {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    /* suggestion tiles */
+    .suggestions {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+      width: 100%;
+      max-width: 600px;
+      margin-top: 40px;
+    }
+
+    .suggestion-tile {
+      background-color: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 14px 18px;
+      text-align: left;
+      cursor: pointer;
+      transition: all var(--transition-speed);
+    }
+    .suggestion-tile:hover {
+      background-color: var(--bg-card-hover);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    .suggestion-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: 2px;
+    }
+
+    .suggestion-desc {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    /* Processing state */
+    .processing-state {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      margin-top: 15vh;
+      text-align: center;
+    }
+
+    .spinner {
+      width: 48px;
+      height: 48px;
+      border: 3px solid rgba(255, 255, 255, 0.05);
+      border-radius: 50%;
+      border-top-color: var(--accent);
+      animation: spin 1s linear infinite;
+      margin-bottom: 24px;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .processing-title {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+
+    .processing-subtitle {
+      font-size: 13px;
+      color: var(--text-secondary);
+      height: 20px;
+    }
+
+    /* Chat bubble thread */
+    .chat-thread {
+      display: none;
+      flex-direction: column;
+      gap: 32px;
+      width: 100%;
+    }
+
+    .chat-bubble {
+      display: flex;
+      gap: 16px;
+      width: 100%;
+    }
+
+    .chat-bubble.user {
+      justify-content: flex-end;
+    }
+
+    .chat-avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 600;
+      font-size: 12px;
+      flex-shrink: 0;
+    }
+
+    .chat-avatar.assistant {
+      background: linear-gradient(135deg, var(--accent), #4f46e5);
+      color: white;
+    }
+
+    .chat-avatar.user {
+      display: none; /* Align user bubble to right without avatar */
+    }
+
+    .chat-bubble-content {
+      max-width: 85%;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .chat-bubble.user .chat-bubble-content {
+      background-color: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 16px 16px 0 16px;
+      padding: 12px;
+      align-self: flex-end;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+    }
+
+    .user-image-preview {
+      max-width: 100%;
+      max-height: 280px;
+      border-radius: 8px;
+      display: block;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .user-image-name {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 6px;
+      text-align: right;
+      font-family: 'Fira Code', monospace;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 250px;
+    }
+
+    /* Result Panel (Assistant response) */
+    .chat-bubble.assistant .chat-bubble-content {
+      width: 100%;
+      max-width: 100%;
+    }
+
+    /* Verdict Banner Card */
+    .verdict-card {
+      border-radius: 12px;
+      padding: 20px 24px;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: flex-start;
+      gap: 16px;
+      border: 1px solid transparent;
+      box-shadow: 0 10px 25px -10px rgba(0,0,0,0.3);
+    }
+
+    .verdict-card.real {
+      background-color: var(--color-real-bg);
+      border-color: var(--color-real-border);
+    }
+    .verdict-card.ai_generated {
+      background-color: var(--color-ai-bg);
+      border-color: var(--color-ai-border);
+    }
+    .verdict-card.deepfake {
+      background-color: var(--color-df-bg);
+      border-color: var(--color-df-border);
+    }
+
+    .verdict-icon-container {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .verdict-card.real .verdict-icon-container {
+      background-color: rgba(16, 185, 129, 0.2);
+      color: var(--color-real);
+    }
+    .verdict-card.ai_generated .verdict-icon-container {
+      background-color: rgba(245, 158, 11, 0.2);
+      color: var(--color-ai);
+    }
+    .verdict-card.deepfake .verdict-icon-container {
+      background-color: rgba(239, 68, 68, 0.2);
+      color: var(--color-df);
+    }
+
+    .verdict-icon {
+      width: 22px;
+      height: 22px;
+      fill: currentColor;
+    }
+
+    .verdict-details {
+      flex: 1;
+    }
+
+    .verdict-title {
+      font-family: 'Outfit', sans-serif;
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+    .verdict-card.real .verdict-title { color: #34d399; }
+    .verdict-card.ai_generated .verdict-title { color: #fbbf24; }
+    .verdict-card.deepfake .verdict-title { color: #f87171; }
+
+    .verdict-desc {
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+
+    /* Score Gauges Card */
+    .score-card {
+      background-color: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 20px 24px;
+      margin-bottom: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .score-header-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .gauge-container {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .gauge-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .gauge-label {
+      width: 140px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-secondary);
+    }
+
+    .gauge-bar-outer {
+      flex: 1;
+      height: 10px;
+      background-color: rgba(255, 255, 255, 0.05);
+      border-radius: 5px;
+      overflow: hidden;
+      border: 1px solid var(--border-color);
+      position: relative;
+    }
+
+    .gauge-bar-inner {
+      height: 100%;
+      border-radius: 5px;
+      width: 0%; /* Animate via JS */
+      transition: width 0.8s cubic-bezier(0.1, 0.8, 0.25, 1);
+    }
+
+    .gauge-bar-inner.ai { background-color: var(--accent); }
+    .gauge-bar-inner.real { background-color: var(--color-real); }
+
+    .gauge-value {
+      width: 60px;
+      font-family: 'Fira Code', monospace;
+      font-size: 13px;
+      font-weight: 600;
+      text-align: right;
+    }
+
+    /* Accordion Explainability */
+    .accordion {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 24px;
+    }
+
+    .accordion-item {
+      background-color: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      overflow: hidden;
+      transition: all var(--transition-speed);
+    }
+    .accordion-item:hover {
+      border-color: rgba(255, 255, 255, 0.15);
+    }
+
+    .accordion-header {
+      padding: 14px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .accordion-header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .accordion-header-icon {
+      width: 18px;
+      height: 18px;
+      color: var(--text-secondary);
+      transition: transform var(--transition-speed);
+    }
+    .accordion-item.active .accordion-header-icon {
+      transform: rotate(90deg);
+      color: var(--text-primary);
+    }
+
+    .accordion-body {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.3s cubic-bezier(0.1, 0.8, 0.25, 1);
+      border-top: 1px solid transparent;
+    }
+    .accordion-item.active .accordion-body {
+      border-top-color: var(--border-color);
+    }
+
+    .accordion-content {
+      padding: 20px;
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.6;
+    }
+
+    /* Badge Grid */
+    .badge-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+
+    .feature-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 500;
+      border: 1px solid var(--border-color);
+      background-color: rgba(255, 255, 255, 0.02);
+    }
+    .feature-badge.yes {
+      color: #34d399; /* emerald-400 */
+      background-color: rgba(16, 185, 129, 0.05);
+      border-color: rgba(16, 185, 129, 0.2);
+    }
+    .feature-badge.no {
+      color: var(--text-muted);
+      opacity: 0.6;
+    }
+
+    .rationale-list {
+      list-style-type: none;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .rationale-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+    }
+    .rationale-item::before {
+      content: "•";
+      color: var(--accent);
+      font-weight: bold;
+      font-size: 16px;
+      line-height: 1;
+      margin-top: 2px;
+    }
+
+    /* Sub-grid and data tables */
+    .info-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 12px;
+      font-size: 12px;
+    }
+    .info-table th, .info-table td {
+      padding: 6px 10px;
+      text-align: left;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    }
+    .info-table th {
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      font-size: 10px;
+      letter-spacing: 0.05em;
+    }
+    .info-table tr:last-child td {
+      border-bottom: none;
+    }
+    .info-table td.val {
+      font-family: 'Fira Code', monospace;
+      text-align: right;
+    }
+
+    .nested-face-card {
+      display: flex;
+      gap: 16px;
+      background-color: rgba(255, 255, 255, 0.02);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 16px;
+      align-items: center;
+    }
+
+    .nested-face-img {
+      width: 80px;
+      height: 80px;
+      object-fit: cover;
+      border-radius: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      background-color: #000;
+      flex-shrink: 0;
+    }
+
+    .nested-face-details {
+      flex: 1;
+    }
+
+    /* Actions Bar */
+    .actions-bar {
+      display: flex;
+      justify-content: center;
+      margin-top: 10px;
+      margin-bottom: 30px;
+    }
+
+    .btn-secondary {
+      background-color: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border-color);
+      color: var(--text-primary);
+      padding: 10px 24px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: all var(--transition-speed);
+    }
+    .btn-secondary:hover {
+      background-color: rgba(255, 255, 255, 0.1);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    /* Utilities */
+    .hidden {
+      display: none !important;
+    }
+
+    .text-success { color: var(--color-real); }
+    .text-warning { color: var(--color-ai); }
+    .text-danger { color: var(--color-df); }
+
+    /* Icons */
+    .icon {
+      width: 16px;
+      height: 16px;
+      fill: currentColor;
+      display: inline-block;
+      vertical-align: middle;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- SVGs Symbol Store -->
+  <svg class="hidden">
+    <symbol id="icon-plus" viewBox="0 0 24 24">
+      <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+    </symbol>
+    <symbol id="icon-chevron" viewBox="0 0 24 24">
+      <path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/>
+    </symbol>
+    <symbol id="icon-file-up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+      <polyline points="17 8 12 3 7 8"/>
+      <line x1="12" y1="3" x2="12" y2="15"/>
+    </symbol>
+    <symbol id="icon-shield-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+      <line x1="12" y1="8" x2="12" y2="12"/>
+      <line x1="12" y1="16" x2="12.01" y2="16"/>
+    </symbol>
+    <symbol id="icon-alert-triangle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+      <line x1="12" y1="9" x2="12" y2="13"/>
+      <line x1="12" y1="17" x2="12.01" y2="17"/>
+    </symbol>
+    <symbol id="icon-check-circle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+      <polyline points="22 4 12 14.01 9 11.01"/>
+    </symbol>
+    <symbol id="icon-image" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+      <circle cx="8.5" cy="8.5" r="1.5"/>
+      <polyline points="21 15 16 10 5 21"/>
+    </symbol>
+    <symbol id="icon-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="3"/>
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+    </symbol>
+  </svg>
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-title">Seeing through Deepfakes</div>
+      <div class="sidebar-subtitle">M.Sc. Proof of Concept</div>
+    </div>
+    
+    <div class="sidebar-content">
+      <button class="btn-new-chat" id="btn-new-chat">
+        <svg class="icon"><use href="#icon-plus"/></svg>
+        New Analysis
+      </button>
+
+      <div class="sidebar-section-title">⚙️ Pipeline Configuration</div>
+
+      <!-- Fusion strategy dropdown -->
+      <div class="control-group">
+        <label class="control-label" for="param-strategy">Decision Strategy</label>
+        <select class="input-control" id="param-strategy">
+          <option value="weighted_average">Weighted Average</option>
+          <option value="conservative_threshold">Conservative AND Gate</option>
+          <option value="bayesian">Bayesian Fusion</option>
+        </select>
+      </div>
+
+      <!-- Group 1: Weighted Average sliders -->
+      <div id="group-weighted_average">
+        <div class="control-group">
+          <div class="control-label"><span>Metadata Weight (W_meta)</span><span class="control-val" id="val-w_meta">0.30</span></div>
+          <input type="range" class="slider-control" id="param-w_meta" min="0" max="1" step="0.05" value="0.30">
+        </div>
+        <div class="control-group">
+          <div class="control-label"><span>Visual Weight (W_visual)</span><span class="control-val" id="val-w_visual">0.70</span></div>
+          <input type="range" class="slider-control" id="param-w_visual" min="0" max="1" step="0.05" value="0.70">
+        </div>
+        <div class="control-group">
+          <div class="control-label"><span>Metadata Accuracy</span><span class="control-val" id="val-meta_accuracy">0.70</span></div>
+          <input type="range" class="slider-control" id="param-meta_accuracy" min="0.5" max="1" step="0.01" value="0.70">
+        </div>
+        <div class="control-group">
+          <div class="control-label"><span>Visual Accuracy</span><span class="control-val" id="val-visual_accuracy">0.83</span></div>
+          <input type="range" class="slider-control" id="param-visual_accuracy" min="0.5" max="1" step="0.01" value="0.83">
+        </div>
+        <div class="control-group">
+          <div class="control-label"><span>Face Padding</span><span class="control-val" id="val-face_padding">0.30</span></div>
+          <input type="range" class="slider-control" id="param-face_padding" min="0" max="1" step="0.05" value="0.30">
+        </div>
+        <div class="control-group">
+          <div class="control-label"><span>Decision Threshold</span><span class="control-val" id="val-wa_threshold">0.55</span></div>
+          <input type="range" class="slider-control" id="param-wa_threshold" min="0.10" max="0.95" step="0.05" value="0.55">
+        </div>
+      </div>
+
+      <!-- Group 2: Conservative Threshold sliders -->
+      <div id="group-conservative_threshold" class="hidden">
+        <div class="control-group">
+          <div class="control-label"><span>Metadata Threshold</span><span class="control-val" id="val-ct_meta_thresh">0.70</span></div>
+          <input type="range" class="slider-control" id="param-ct_meta_thresh" min="0.10" max="0.99" step="0.05" value="0.70">
+        </div>
+        <div class="control-group">
+          <div class="control-label"><span>Visual Threshold</span><span class="control-val" id="val-ct_visual_thresh">0.65</span></div>
+          <input type="range" class="slider-control" id="param-ct_visual_thresh" min="0.10" max="0.99" step="0.05" value="0.65">
+        </div>
+      </div>
+
+      <!-- Group 3: Bayesian Fusion sliders -->
+      <div id="group-bayesian" class="hidden">
+        <div class="control-group">
+          <div class="control-label"><span>Prior Probability</span><span class="control-val" id="val-bayes_prior">0.50</span></div>
+          <input type="range" class="slider-control" id="param-bayes_prior" min="0.05" max="0.95" step="0.05" value="0.50">
+        </div>
+        <div class="control-group">
+          <div class="control-label"><span>Decision Threshold</span><span class="control-val" id="val-bayes_threshold">0.55</span></div>
+          <input type="range" class="slider-control" id="param-bayes_threshold" min="0.10" max="0.95" step="0.05" value="0.55">
+        </div>
+      </div>
+
+      <!-- Common parameter: Deepfake secondary threshold -->
+      <div class="control-group">
+        <div class="control-label"><span>Deepfake Sub-threshold</span><span class="control-val" id="val-deepfake_threshold">0.50</span></div>
+        <input type="range" class="slider-control" id="param-deepfake_threshold" min="0.10" max="0.95" step="0.05" value="0.50">
+      </div>
+
+      <!-- Session History -->
+      <div class="sidebar-section-title">🕒 Analysis History</div>
+      <div class="history-list" id="history-list">
+        <!-- Dynamic history items go here -->
+        <div class="history-item empty" id="history-empty">
+          <span style="font-size:11px; color:var(--text-muted); font-style:italic;">No files analyzed yet in this session.</span>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- MAIN AREA -->
+  <main class="main-container">
+    <!-- Header -->
+    <header class="main-header">
+      <div>Active Pipeline</div>
+      <div class="active-config-badge" id="active-badge">
+        Strategy: Weighted Average | Threshold: 0.55
+      </div>
+    </header>
+
+    <!-- Workspace -->
+    <section class="workspace" id="workspace-scroll-container">
+      <div class="content-width">
+        
+        <!-- 1. EMPTY STATE (Default Upload screen) -->
+        <div class="empty-state" id="view-empty">
+          <div class="logo-container">
+            <svg class="logo-icon" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 17.5228 6.47715 22 12 22ZM12 17.5C12.8284 17.5 13.5 16.8284 13.5 16C13.5 15.1716 12.8284 14.5 12 14.5C11.1716 14.5 10.5 15.1716 10.5 16C10.5 16.8284 11.1716 17.5 12 17.5ZM12 13C12.5523 13 13 12.5523 13 12V7C13 6.44772 12.5523 6 12 6C11.4477 6 11 6.44772 11 7V12C11 12.5523 11.4477 13 12 13Z"/>
+            </svg>
+          </div>
+          <h1 class="empty-title">Seeing through Deepfakes</h1>
+          <p class="empty-subtitle">Upload any image to execute content provenance checks, ViT deep learning classifiers, and face landmark retrieval to check if it's real or AI-generated.</p>
+          
+          <!-- Drop Zone -->
+          <div class="drop-zone" id="drop-zone">
+            <input type="file" id="file-input" class="hidden" accept=".png,.jpg,.jpeg,.webp">
+            <div class="drop-icon-wrapper">
+              <svg class="icon" style="width:24px; height:24px;"><use href="#icon-file-up"/></svg>
+            </div>
+            <div class="drop-text-primary">Drag and drop your photo here</div>
+            <div class="drop-text-secondary">or click to browse from files</div>
+          </div>
+
+          <!-- Suggestions -->
+          <div class="suggestions">
+            <div class="suggestion-tile" data-tag="Real Image">
+              <div class="suggestion-title">📷 Real Camera Photo</div>
+              <div class="suggestion-desc">Checks for camera EXIF metadata and consistent noise.</div>
+            </div>
+            <div class="suggestion-tile" data-tag="AI Image">
+              <div class="suggestion-title">🤖 Midjourney/DALL-E Image</div>
+              <div class="suggestion-desc">Identifies visual synth artifacts and software software tags.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 2. PROCESSING / LOADING STATE -->
+        <div class="processing-state" id="view-processing">
+          <div class="spinner"></div>
+          <div class="processing-title" id="processing-title">Analyzing Image</div>
+          <div class="processing-subtitle" id="processing-subtitle">Initializing modules...</div>
+        </div>
+
+        <!-- 3. CHAT THREAD (RESULT DISPLAY) -->
+        <div class="chat-thread" id="view-results">
+          
+          <!-- User message (Image preview) -->
+          <div class="chat-bubble user">
+            <div class="chat-bubble-content">
+              <img class="user-image-preview" id="res-user-img" src="" alt="Uploaded photo">
+              <div class="user-image-name" id="res-user-filename">image_name.jpg</div>
+            </div>
+          </div>
+
+          <!-- Assistant response (Analysis Breakdown) -->
+          <div class="chat-bubble assistant">
+            <div class="chat-avatar assistant">AI</div>
+            <div class="chat-bubble-content">
+              
+              <!-- Verdict Banner -->
+              <div class="verdict-card" id="res-verdict-card">
+                <div class="verdict-icon-container">
+                  <!-- icon dynamically swapped -->
+                  <svg class="verdict-icon" id="res-verdict-icon"><use href="#icon-shield-alert"/></svg>
+                </div>
+                <div class="verdict-details">
+                  <div class="verdict-title" id="res-verdict-title">Probable Deepfake</div>
+                  <div class="verdict-desc" id="res-verdict-desc">Analysis indicates AI-generated pixel manipulation with a high likelihood.</div>
+                </div>
+              </div>
+
+              <!-- Combined Score Gauges -->
+              <div class="score-card">
+                <div class="score-header-title">📊 Decision Engine Output</div>
+                <div class="gauge-container">
+                  <div class="gauge-row">
+                    <div class="gauge-label">Probability AI-Generated</div>
+                    <div class="gauge-bar-outer">
+                      <div class="gauge-bar-inner ai" id="gauge-ai-bar"></div>
+                    </div>
+                    <div class="gauge-value text-warning" id="gauge-ai-val">0.0%</div>
+                  </div>
+                  <div class="gauge-row">
+                    <div class="gauge-label">Probability Real Image</div>
+                    <div class="gauge-bar-outer">
+                      <div class="gauge-bar-inner real" id="gauge-real-bar"></div>
+                    </div>
+                    <div class="gauge-value text-success" id="gauge-real-val">0.0%</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Collapsible Accordion sections -->
+              <div class="accordion">
+                
+                <!-- 1. Metadata Module -->
+                <div class="accordion-item" id="acc-meta">
+                  <div class="accordion-header">
+                    <div class="accordion-header-left">
+                      <span>📁 Metadata Module Explainability</span>
+                    </div>
+                    <svg class="accordion-header-icon icon"><use href="#icon-chevron"/></svg>
+                  </div>
+                  <div class="accordion-body">
+                    <div class="accordion-content">
+                      <div style="display:flex; justify-content:space-between; margin-bottom:12px;">
+                        <span>Metadata AI Probability:</span>
+                        <strong class="text-warning" id="meta-prob-val">0.0%</strong>
+                      </div>
+                      
+                      <!-- Flags -->
+                      <div class="badge-grid" id="meta-badges">
+                        <!-- Badges dynamically added -->
+                      </div>
+
+                      <div style="font-weight:600; font-size:12px; margin-top:16px;">Decision Rationale:</div>
+                      <ul class="rationale-list" id="meta-rationale">
+                        <!-- Items dynamically added -->
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 2. Visual Classifier Module -->
+                <div class="accordion-item" id="acc-visual">
+                  <div class="accordion-header">
+                    <div class="accordion-header-left">
+                      <span>🖼️ Visual Classifier Explainability</span>
+                    </div>
+                    <svg class="accordion-header-icon icon"><use href="#icon-chevron"/></svg>
+                  </div>
+                  <div class="accordion-body">
+                    <div class="accordion-content">
+                      <div style="margin-bottom: 16px;">
+                        <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
+                          <span>Whole Image Score (P-AI):</span>
+                          <strong id="vis-whole-prob-val">0.0%</strong>
+                        </div>
+                        <div style="display:flex; justify-content:space-between;">
+                          <span>Prediction Verdict:</span>
+                          <span id="vis-whole-verdict-val" style="font-weight:600;">Real</span>
+                        </div>
+                      </div>
+
+                      <!-- Cropped face panel (conditional) -->
+                      <div id="vis-face-crop-card" class="hidden">
+                        <div style="font-weight:600; font-size:12px; margin-bottom:8px; margin-top:16px;">👤 Cropped Face Region Analysis:</div>
+                        <div class="nested-face-card">
+                          <img class="nested-face-img" id="vis-face-crop-img" src="" alt="Cropped face">
+                          <div class="nested-face-details">
+                            <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px;">
+                              <span>Face Region AI Probability:</span>
+                              <strong id="vis-face-prob-val">0.0%</strong>
+                            </div>
+                            <div style="display:flex; justify-content:space-between; font-size:12px;">
+                              <span>Face Verdict:</span>
+                              <span id="vis-face-verdict-val" style="font-weight:600;">Real</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <!-- Scores Breakdown Table -->
+                      <div style="font-weight:600; font-size:12px; margin-top:16px; margin-bottom:6px;">ViT Outputs (Whole Image):</div>
+                      <table class="info-table" id="vis-scores-table">
+                        <thead>
+                          <tr>
+                            <th>Class Label</th>
+                            <th style="text-align:right;">Probability</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <!-- Dynamic rows -->
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 3. Deepfake Classifier Module -->
+                <div class="accordion-item" id="acc-deepfake">
+                  <div class="accordion-header">
+                    <div class="accordion-header-left">
+                      <span>🎭 Deepfake Classifier Explainability</span>
+                    </div>
+                    <svg class="accordion-header-icon icon"><use href="#icon-chevron"/></svg>
+                  </div>
+                  <div class="accordion-body">
+                    <div class="accordion-content">
+                      <div id="df-not-run-msg" class="hidden">
+                        <div style="text-align:center; padding:12px 0; color:var(--text-muted); font-style:italic;">
+                          Deepfake Module was not executed because the decision engine classified this image as Real.
+                        </div>
+                      </div>
+                      
+                      <div id="df-results-content">
+                        <table class="info-table">
+                          <thead>
+                            <tr>
+                              <th>Classifier Sub-Module</th>
+                              <th>Output Result</th>
+                              <th style="text-align:right;">Confidence</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr>
+                              <td>MTCNN Face Detection</td>
+                              <td id="df-val-face">No Face Detected</td>
+                              <td class="val" id="df-conf-face">-</td>
+                            </tr>
+                            <tr>
+                              <td>Places365 Scene Classifier</td>
+                              <td id="df-val-scene">-</td>
+                              <td class="val" id="df-conf-scene">-</td>
+                            </tr>
+                            <tr>
+                              <td>DINOv2 Landmark Search</td>
+                              <td id="df-val-landmark">None matched</td>
+                              <td class="val" id="df-conf-landmark">-</td>
+                            </tr>
+                          </tbody>
+                        </table>
+
+                        <!-- Landmark detail dropdown -->
+                        <div id="df-landmark-matches-section" style="margin-top: 16px;" class="hidden">
+                          <div style="font-weight:600; font-size:12px; margin-bottom:8px;">Retrieval Matches (FAISS Index):</div>
+                          <table class="info-table" id="df-landmark-matches-table">
+                            <thead>
+                              <tr>
+                                <th>Landmark / Identity</th>
+                                <th style="text-align:right;">Matches</th>
+                                <th style="text-align:right;">Avg Similarity</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              <!-- Dynamic rows -->
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Upload another image button in bubble -->
+              <div class="actions-bar">
+                <button class="btn-secondary" id="btn-upload-another">
+                  <svg class="icon"><use href="#icon-file-up"/></svg>
+                  Analyze Another Image
+                </button>
+              </div>
+
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+    </section>
+  </main>
+
+  <script>
+    // --- State management ---
+    let currentSessionHistory = [];
+    let activeResultId = null;
+
+    // --- DOM Elements ---
+    const dropZone = document.getElementById('drop-zone');
+    const fileInput = document.getElementById('file-input');
+    const btnNewChat = document.getElementById('btn-new-chat');
+    const btnUploadAnother = document.getElementById('btn-upload-another');
+    const historyList = document.getElementById('history-list');
+    const historyEmpty = document.getElementById('history-empty');
+    const activeBadge = document.getElementById('active-badge');
+    const workspaceScroll = document.getElementById('workspace-scroll-container');
+
+    const viewEmpty = document.getElementById('view-empty');
+    const viewProcessing = document.getElementById('view-processing');
+    const viewResults = document.getElementById('view-results');
+
+    const processingTitle = document.getElementById('processing-title');
+    const processingSubtitle = document.getElementById('processing-subtitle');
+
+    // Result outputs
+    const resUserImg = document.getElementById('res-user-img');
+    const resUserFilename = document.getElementById('res-user-filename');
+    const resVerdictCard = document.getElementById('res-verdict-card');
+    const resVerdictIcon = document.getElementById('res-verdict-icon');
+    const resVerdictTitle = document.getElementById('res-verdict-title');
+    const resVerdictDesc = document.getElementById('res-verdict-desc');
+
+    const gaugeAiBar = document.getElementById('gauge-ai-bar');
+    const gaugeAiVal = document.getElementById('gauge-ai-val');
+    const gaugeRealBar = document.getElementById('gauge-real-bar');
+    const gaugeRealVal = document.getElementById('gauge-real-val');
+
+    // Accordion headers
+    document.querySelectorAll('.accordion-header').forEach(header => {
+      header.addEventListener('click', () => {
+        const item = header.parentElement;
+        const isActive = item.classList.contains('active');
+        
+        // Collapse all others
+        document.querySelectorAll('.accordion-item').forEach(i => {
+          i.classList.remove('active');
+          i.querySelector('.accordion-body').style.maxHeight = null;
+        });
+
+        if (!isActive) {
+          item.classList.add('active');
+          const body = item.querySelector('.accordion-body');
+          body.style.maxHeight = body.scrollHeight + "px";
+        }
+      });
+    });
+
+    // --- Settings / Sliders Event Hooks ---
+    const strategySelect = document.getElementById('param-strategy');
+    const allGroups = ['weighted_average', 'conservative_threshold', 'bayesian'];
+    
+    // Sliders
+    const sliders = [
+      'w_meta', 'w_visual', 'meta_accuracy', 'visual_accuracy', 'face_padding', 
+      'wa_threshold', 'ct_meta_thresh', 'ct_visual_thresh', 'bayes_prior', 
+      'bayes_threshold', 'deepfake_threshold'
+    ];
+
+    strategySelect.addEventListener('change', () => {
+      const selected = strategySelect.value;
+      allGroups.forEach(g => {
+        const div = document.getElementById('group-' + g);
+        if (g === selected) {
+          div.classList.remove('hidden');
+        } else {
+          div.classList.add('hidden');
+        }
+      });
+      updateBadge();
+    });
+
+    sliders.forEach(s => {
+      const input = document.getElementById('param-' + s);
+      const valSpan = document.getElementById('val-' + s);
+      if (input && valSpan) {
+        input.addEventListener('input', () => {
+          valSpan.textContent = parseFloat(input.value).toFixed(2);
+          updateBadge();
+        });
+      }
+    });
+
+    function updateBadge() {
+      const stratName = strategySelect.options[strategySelect.selectedIndex].text;
+      let thresh = '0.50';
+      if (strategySelect.value === 'weighted_average') {
+        thresh = document.getElementById('param-wa_threshold').value;
+      } else if (strategySelect.value === 'conservative_threshold') {
+        thresh = `Meta:${document.getElementById('param-ct_meta_thresh').value} Vis:${document.getElementById('param-ct_visual_thresh').value}`;
+      } else if (strategySelect.value === 'bayesian') {
+        thresh = document.getElementById('param-bayes_threshold').value;
+      }
+      activeBadge.textContent = `Strategy: ${stratName} | Threshold: ${thresh}`;
+    }
+
+    // --- File Drop / Selection ---
+    dropZone.addEventListener('click', () => fileInput.click());
+    
+    dropZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropZone.classList.add('dragover');
+    });
+    
+    dropZone.addEventListener('dragleave', () => {
+      dropZone.classList.remove('dragover');
+    });
+    
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('dragover');
+      if (e.dataTransfer.files.length > 0) {
+        processUploadedFile(e.dataTransfer.files[0]);
+      }
+    });
+
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files.length > 0) {
+        processUploadedFile(fileInput.files[0]);
+      }
+    });
+
+    // Suggestions click
+    document.querySelectorAll('.suggestion-tile').forEach(tile => {
+      tile.addEventListener('click', () => {
+        // Just trigger standard click upload
+        fileInput.click();
+      });
+    });
+
+    // New analysis reset button
+    btnNewChat.addEventListener('click', resetToEmptyView);
+    btnUploadAnother.addEventListener('click', resetToEmptyView);
+
+    function resetToEmptyView() {
+      fileInput.value = '';
+      activeResultId = null;
+      document.querySelectorAll('.history-item').forEach(item => item.classList.remove('active'));
+      
+      viewEmpty.style.display = 'flex';
+      viewProcessing.style.display = 'none';
+      viewResults.style.display = 'none';
+    }
+
+    // Gather config values to send to backend
+    function getFormDataConfig() {
+      const config = {};
+      config.fusion_strategy = strategySelect.value;
+      sliders.forEach(s => {
+        const el = document.getElementById('param-' + s);
+        if (el) {
+          config[s] = el.value;
+        }
+      });
+      return config;
+    }
+
+    // --- Main File Processing Pipeline ---
+    function processUploadedFile(file) {
+      // 1. Show processing state
+      viewEmpty.style.display = 'none';
+      viewResults.style.display = 'none';
+      viewProcessing.style.display = 'flex';
+
+      // Keep image URL for user preview
+      const objectURL = URL.createObjectURL(file);
+      
+      // Initial status messages
+      updateProcessingStatus("Initializing modules...", "Loading file bytes into pipeline");
+
+      // Prepare multi-part form
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      // Append config variables
+      const configs = getFormDataConfig();
+      for (const [k, v] of Object.entries(configs)) {
+        formData.append(k, v);
+      }
+
+      // Simulate status updates (since network backend does a single POST, we simulate progress based on standard duration)
+      let statusStep = 0;
+      const statusInterval = setInterval(() => {
+        statusStep++;
+        if (statusStep === 1) {
+          updateProcessingStatus("Reading image metadata...", "Extracting EXIF tags and scan for binary signatures");
+        } else if (statusStep === 3) {
+          updateProcessingStatus("Running Visual Classifier...", "Processing image pixels via fine-tuned ViT");
+        } else if (statusStep === 5) {
+          updateProcessingStatus("Running Face Detection...", "Scanning face bounding boxes with MTCNN");
+        } else if (statusStep === 7) {
+          updateProcessingStatus("Decision Fusion Engine...", "Applying selected decision formula");
+        } else if (statusStep === 9) {
+          updateProcessingStatus("Executing Deepfake Module...", "Running Scene classifier and DINOv2 retrieval");
+        }
+      }, 700);
+
+      // Perform POST upload
+      fetch('/api/analyze', {
+        method: 'POST',
+        body: formData
+      })
+      .then(response => {
+        clearInterval(statusInterval);
+        if (!response.ok) {
+          return response.json().then(err => { throw new Error(err.error || "Server error") });
+        }
+        return response.json();
+      })
+      .then(data => {
+        // Save result object
+        const resultItem = {
+          id: Date.now().toString(),
+          filename: file.name,
+          imgSrc: objectURL,
+          data: data
+        };
+
+        currentSessionHistory.push(resultItem);
+        addHistoryItem(resultItem);
+        renderAnalysisResults(resultItem);
+      })
+      .catch(error => {
+        clearInterval(statusInterval);
+        console.error(error);
+        alert("Pipeline failed: " + error.message);
+        resetToEmptyView();
+      });
+    }
+
+    function updateProcessingStatus(title, desc) {
+      processingTitle.textContent = title;
+      processingSubtitle.textContent = desc;
+    }
+
+    // --- Render outputs ---
+    function renderAnalysisResults(resultItem) {
+      activeResultId = resultItem.id;
+      
+      // Update sidebar active selection
+      document.querySelectorAll('.history-item').forEach(item => {
+        if (item.dataset.id === resultItem.id) {
+          item.classList.add('active');
+        } else {
+          item.classList.remove('active');
+        }
+      });
+
+      const data = resultItem.data;
+      
+      // 1. Show views
+      viewEmpty.style.display = 'none';
+      viewProcessing.style.display = 'none';
+      viewResults.style.display = 'flex';
+
+      // 2. Set user inputs preview
+      resUserImg.src = resultItem.imgSrc;
+      resUserFilename.textContent = resultItem.filename;
+
+      // 3. Verdict card customization
+      resVerdictCard.className = 'verdict-card ' + data.verdict_type;
+      
+      // Swap icons based on type
+      let iconHref = '#icon-check-circle';
+      let titlePrefix = 'Probably Real';
+      if (data.verdict_type === 'ai_generated') {
+        iconHref = '#icon-alert-triangle';
+        titlePrefix = 'Probably AI Generated';
+      } else if (data.verdict_type === 'deepfake') {
+        iconHref = '#icon-shield-alert';
+        titlePrefix = 'Probable Deepfake';
+      }
+      resVerdictIcon.querySelector('use').setAttribute('href', iconHref);
+      resVerdictTitle.textContent = titlePrefix;
+      resVerdictDesc.textContent = data.verdict;
+
+      // 4. Progress bar values
+      const aiProb = data.fusion.probability;
+      const realProb = 1 - aiProb;
+
+      // Animate progress bars
+      setTimeout(() => {
+        gaugeAiBar.style.width = (aiProb * 100) + '%';
+        gaugeRealBar.style.width = (realProb * 100) + '%';
+      }, 100);
+
+      gaugeAiVal.textContent = (aiProb * 100).toFixed(2) + '%';
+      gaugeRealVal.textContent = (realProb * 100).toFixed(2) + '%';
+
+      // 5. Accordion content: Metadata Module
+      const meta = data.metadata;
+      document.getElementById('meta-prob-val').textContent = (meta.probability * 100).toFixed(2) + '%';
+      
+      const badgeGrid = document.getElementById('meta-badges');
+      badgeGrid.innerHTML = ''; // reset
+      
+      const featureLabels = {
+        has_c2pa: "C2PA Provenance",
+        has_ai_claim: "AI Claim in EXIF",
+        has_make: "Camera Make",
+        has_model: "Camera Model",
+        has_lens_model: "Lens Information",
+        has_gps: "GPS Coordinates",
+        suspicious_only_software_tags: "Suspicious Software Tags",
+        suspicious_perfect_timestamp: "Perfect Timestamp"
+      };
+
+      for (const [key, label] of Object.entries(featureLabels)) {
+        const val = meta.features[key];
+        const badge = document.createElement('div');
+        badge.className = 'feature-badge ' + (val ? 'yes' : 'no');
+        badge.innerHTML = `<span>${val ? '✓' : '✗'}</span> ${label}`;
+        badgeGrid.appendChild(badge);
+      }
+
+      // Metadata rationale
+      const rationaleList = document.getElementById('meta-rationale');
+      rationaleList.innerHTML = '';
+      if (meta.rationale && meta.rationale.length > 0) {
+        meta.rationale.forEach(rat => {
+          const li = document.createElement('li');
+          li.className = 'rationale-item';
+          li.textContent = rat;
+          rationaleList.appendChild(li);
+        });
+      } else {
+        const li = document.createElement('li');
+        li.className = 'rationale-item';
+        li.style.fontStyle = 'italic';
+        li.textContent = "No suspicious metadata markers detected.";
+        rationaleList.appendChild(li);
+      }
+
+      // 6. Accordion content: Visual Classifier
+      const vis = data.visual;
+      document.getElementById('vis-whole-prob-val').textContent = (vis.probability * 100).toFixed(2) + '%';
+      document.getElementById('vis-whole-verdict-val').textContent = vis.prediction;
+      
+      // Whole Image scores table
+      const visTableBody = document.querySelector('#vis-scores-table tbody');
+      visTableBody.innerHTML = '';
+      if (vis.all_scores) {
+        Object.entries(vis.all_scores).forEach(([cls, score]) => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = `<td>${cls}</td><td class="val">${(score * 100).toFixed(2)}%</td>`;
+          visTableBody.appendChild(tr);
+        });
+      }
+
+      // Face Crop region (if present)
+      const faceCard = document.getElementById('vis-face-crop-card');
+      const croppedVis = data.cropped_visual;
+      if (croppedVis && croppedVis.cropped_face_b64) {
+        faceCard.classList.remove('hidden');
+        document.getElementById('vis-face-crop-img').src = 'data:image/jpeg;base64,' + croppedVis.cropped_face_b64;
+        document.getElementById('vis-face-prob-val').textContent = (croppedVis.probability * 100).toFixed(2) + '%';
+        document.getElementById('vis-face-verdict-val').textContent = croppedVis.prediction;
+      } else {
+        faceCard.classList.add('hidden');
+      }
+
+      // 7. Accordion content: Deepfake Classifier
+      const df = data.deepfake;
+      const dfNotRun = document.getElementById('df-not-run-msg');
+      const dfContent = document.getElementById('df-results-content');
+      const landmarkSection = document.getElementById('df-landmark-matches-section');
+
+      if (!df) {
+        dfNotRun.classList.remove('hidden');
+        dfContent.classList.add('hidden');
+      } else {
+        dfNotRun.classList.add('hidden');
+        dfContent.classList.remove('hidden');
+
+        // Face
+        const face = df.face_analysis;
+        document.getElementById('df-val-face').textContent = face.label;
+        document.getElementById('df-conf-face').textContent = face.bbox ? (face.confidence * 100).toFixed(2) + '%' : '-';
+
+        // Scene
+        const scene = df.scene_analysis;
+        document.getElementById('df-val-scene').textContent = scene.label;
+        document.getElementById('df-conf-scene').textContent = (scene.confidence * 100).toFixed(2) + '%';
+
+        // Landmark
+        const landmark = df.landmark_analysis;
+        document.getElementById('df-val-landmark').textContent = landmark.label || 'None matched';
+        document.getElementById('df-conf-landmark').textContent = landmark.confidence ? landmark.confidence.toFixed(4) : '-';
+
+        // Landmark detail FAISS matches
+        const matchesTableBody = document.querySelector('#df-landmark-matches-table tbody');
+        matchesTableBody.innerHTML = '';
+        if (landmark.all_matches && Object.keys(landmark.all_matches).length > 0) {
+          landmarkSection.classList.remove('hidden');
+          Object.entries(landmark.all_matches).forEach(([name, sims]) => {
+            const count = sims.length;
+            const avg = sims.reduce((a,b) => a+b, 0) / count;
+            const tr = document.createElement('tr');
+            tr.innerHTML = `<td>${name}</td><td style="text-align:right;">${count}</td><td class="val">${avg.toFixed(4)}</td>`;
+            matchesTableBody.appendChild(tr);
+          });
+        } else {
+          landmarkSection.classList.add('hidden');
+        }
+      }
+
+      // Reset accordion views - collapse all and open first
+      document.querySelectorAll('.accordion-item').forEach(i => {
+        i.classList.remove('active');
+        i.querySelector('.accordion-body').style.maxHeight = null;
+      });
+      // Expand the first tab by default
+      const firstTab = document.getElementById('acc-meta');
+      firstTab.classList.add('active');
+      const firstBody = firstTab.querySelector('.accordion-body');
+      firstBody.style.maxHeight = firstBody.scrollHeight + "px";
+
+      // Scroll to bottom of chat area
+      setTimeout(() => {
+        workspaceScroll.scrollTo({
+          top: workspaceScroll.scrollHeight,
+          behavior: 'smooth'
+        });
+      }, 200);
+    }
+
+    // --- History functions ---
+    function addHistoryItem(resultItem) {
+      // Remove empty state text
+      if (historyEmpty) {
+        historyEmpty.style.display = 'none';
+      }
+
+      const item = document.createElement('div');
+      item.className = 'history-item';
+      item.dataset.id = resultItem.id;
+      item.innerHTML = `
+        <svg class="history-item-icon icon"><use href="#icon-image"/></svg>
+        <span class="history-item-text">${resultItem.filename}</span>
+      `;
+
+      item.addEventListener('click', () => {
+        const found = currentSessionHistory.find(h => h.id === resultItem.id);
+        if (found) {
+          renderAnalysisResults(found);
+        }
+      });
+
+      // Insert at the top of history
+      historyList.insertBefore(item, historyList.firstChild);
+    }
+
+    // Initialize badge
+    updateBadge();
+  </script>
+</body>
+</html>
