@@ -9,6 +9,7 @@ import webbrowser
 import threading
 import base64
 import atexit
+import traceback
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from PIL import Image
@@ -25,6 +26,7 @@ from src.integration_pipeline.fusion import (
     extract_visual_ai_probability,
     crop_face_region,
 )
+from src.visual_module.gradcam import generate_gradcam_overlay
 
 # ---------------------------------------------------------------------------
 # Global State for Server Tracking
@@ -163,6 +165,19 @@ def run_analysis_pipeline(file_data, params, visual_classifier, deepfake_classif
     visual_result = visual_classifier.predict(pil_image)
     visual_ai_prob = extract_visual_ai_probability(visual_result)
 
+    # Step 2b: GradCAM heatmap for whole image
+    try:
+        visual_gradcam_b64 = generate_gradcam_overlay(
+            model=visual_classifier.model,
+            processor=visual_classifier.processor,
+            image=pil_image,
+            device=visual_classifier.device,
+        )
+    except Exception as e:
+        traceback.print_exc()
+        print(f"[GradCAM] Whole-image heatmap failed: {e}")
+        visual_gradcam_b64 = None
+
     # Step 3: Face crop detection & classification (unconditional)
     face_res = deepfake_classifier.predict_face(pil_image)
     bbox = face_res.get("bbox")
@@ -170,6 +185,7 @@ def run_analysis_pipeline(file_data, params, visual_classifier, deepfake_classif
     cropped_visual_result = None
     cropped_visual_ai_prob = None
     cropped_face_b64 = None
+    cropped_gradcam_b64 = None
     
     if bbox is not None:
         face_padding = float(params.get("face_padding", 0.30))
@@ -182,6 +198,19 @@ def run_analysis_pipeline(file_data, params, visual_classifier, deepfake_classif
         
         cropped_visual_result = visual_classifier.predict(cropped_face)
         cropped_visual_ai_prob = extract_visual_ai_probability(cropped_visual_result)
+
+        # GradCAM heatmap for cropped face
+        try:
+            cropped_gradcam_b64 = generate_gradcam_overlay(
+                model=visual_classifier.model,
+                processor=visual_classifier.processor,
+                image=cropped_face,
+                device=visual_classifier.device,
+            )
+        except Exception as e:
+            traceback.print_exc()
+            print(f"[GradCAM] Cropped-face heatmap failed: {e}")
+            cropped_gradcam_b64 = None
 
     # Step 4: Decision Fusion
     strategy_name = params.get("fusion_strategy", "weighted_average")
@@ -290,6 +319,7 @@ def run_analysis_pipeline(file_data, params, visual_classifier, deepfake_classif
             "prediction": visual_result["prediction"],
             "confidence": visual_result["confidence"],
             "all_scores": visual_result["all_scores"],
+            "gradcam_b64": visual_gradcam_b64,
         },
         "cropped_visual": {
             "probability": cropped_visual_ai_prob,
@@ -297,6 +327,7 @@ def run_analysis_pipeline(file_data, params, visual_classifier, deepfake_classif
             "confidence": cropped_visual_result["confidence"] if cropped_visual_result else None,
             "all_scores": cropped_visual_result["all_scores"] if cropped_visual_result else None,
             "cropped_face_b64": cropped_face_b64,
+            "gradcam_b64": cropped_gradcam_b64 if cropped_visual_result else None,
         } if cropped_visual_result else None,
         "deepfake": deepfake_result_data,
     }

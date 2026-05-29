@@ -26,7 +26,10 @@ class VisualClassifier:
             else "cpu"
         )
         self.processor = AutoImageProcessor.from_pretrained(model_name_or_path)
-        self.model = AutoModelForImageClassification.from_pretrained(model_name_or_path).to(self.device)
+        self.model = AutoModelForImageClassification.from_pretrained(
+            model_name_or_path,
+            attn_implementation="eager"
+        ).to(self.device)
 
         if delta_path is not None:
             print(f"Applying weight delta from '{delta_path}'...")

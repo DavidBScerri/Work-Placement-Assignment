@@ -940,6 +940,90 @@
     .shake {
       animation: shake 0.4s ease-in-out;
     }
+
+    /* GradCAM Heatmap Display */
+    .gradcam-section {
+      margin-top: 20px;
+      padding-top: 16px;
+      border-top: 1px solid var(--border-color);
+    }
+
+    .gradcam-section-title {
+      font-weight: 600;
+      font-size: 12px;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .gradcam-container {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .gradcam-image-wrapper {
+      position: relative;
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+      background-color: #000;
+    }
+
+    .gradcam-image-wrapper img {
+      width: 100%;
+      display: block;
+      border-radius: 10px;
+    }
+
+    .gradcam-caption {
+      font-size: 11px;
+      color: var(--text-muted);
+      line-height: 1.5;
+      margin-top: 6px;
+      font-style: italic;
+    }
+
+    .gradcam-legend {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px;
+      margin-bottom: 4px;
+    }
+
+    .gradcam-legend-bar {
+      width: 120px;
+      height: 10px;
+      border-radius: 5px;
+      background: linear-gradient(to right, #0000ff, #00ffff, #00ff00, #ffff00, #ff0000);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+    }
+
+    .gradcam-legend-labels {
+      display: flex;
+      justify-content: space-between;
+      width: 120px;
+      font-size: 9px;
+      color: var(--text-muted);
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .gradcam-pair {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    @media (max-width: 640px) {
+      .gradcam-pair {
+        grid-template-columns: 1fr;
+      }
+    }
   </style>
 </head>
 <body>
@@ -1207,6 +1291,52 @@
                           <!-- Dynamic rows -->
                         </tbody>
                       </table>
+
+                      <!-- GradCAM Heatmap Section -->
+                      <div class="gradcam-section" id="gradcam-whole-section">
+                        <div class="gradcam-section-title">🔥 GradCAM Attention Heatmap</div>
+                        <div class="gradcam-container">
+                          <div class="gradcam-image-wrapper">
+                            <img id="gradcam-whole-img" src="" alt="GradCAM heatmap overlay">
+                          </div>
+                          <div class="gradcam-legend">
+                            <div>
+                              <div class="gradcam-legend-bar"></div>
+                              <div class="gradcam-legend-labels">
+                                <span>Low</span>
+                                <span>High</span>
+                              </div>
+                            </div>
+                          </div>
+                          <div class="gradcam-caption">
+                            Warm regions (yellow/red) indicate areas the ViT model focuses on most when making its prediction. Cool regions (blue) have less influence on the classification score.
+                          </div>
+                        </div>
+                      </div>
+
+                      <!-- GradCAM for Cropped Face -->
+                      <div class="gradcam-section hidden" id="gradcam-face-section">
+                        <div class="gradcam-section-title">👤🔥 Face Region GradCAM</div>
+                        <div class="gradcam-container">
+                          <div class="gradcam-pair">
+                            <div>
+                              <div style="font-size:11px; color:var(--text-secondary); margin-bottom:6px; font-weight:500;">Cropped Face</div>
+                              <div class="gradcam-image-wrapper">
+                                <img id="gradcam-face-original-img" src="" alt="Cropped face">
+                              </div>
+                            </div>
+                            <div>
+                              <div style="font-size:11px; color:var(--text-secondary); margin-bottom:6px; font-weight:500;">GradCAM Overlay</div>
+                              <div class="gradcam-image-wrapper">
+                                <img id="gradcam-face-heatmap-img" src="" alt="Face GradCAM heatmap">
+                              </div>
+                            </div>
+                          </div>
+                          <div class="gradcam-caption">
+                            Side-by-side comparison of the cropped face region and where the model focuses its attention. This helps diagnose if the model is looking at facial features or surrounding context.
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1662,6 +1792,25 @@
         document.getElementById('vis-face-verdict-val').textContent = croppedVis.prediction;
       } else {
         faceCard.classList.add('hidden');
+      }
+
+      // GradCAM heatmaps
+      const gradcamWholeSection = document.getElementById('gradcam-whole-section');
+      const gradcamWholeImg = document.getElementById('gradcam-whole-img');
+      if (vis.gradcam_b64) {
+        gradcamWholeSection.classList.remove('hidden');
+        gradcamWholeImg.src = 'data:image/jpeg;base64,' + vis.gradcam_b64;
+      } else {
+        gradcamWholeSection.classList.add('hidden');
+      }
+
+      const gradcamFaceSection = document.getElementById('gradcam-face-section');
+      if (croppedVis && croppedVis.gradcam_b64 && croppedVis.cropped_face_b64) {
+        gradcamFaceSection.classList.remove('hidden');
+        document.getElementById('gradcam-face-original-img').src = 'data:image/jpeg;base64,' + croppedVis.cropped_face_b64;
+        document.getElementById('gradcam-face-heatmap-img').src = 'data:image/jpeg;base64,' + croppedVis.gradcam_b64;
+      } else {
+        gradcamFaceSection.classList.add('hidden');
       }
 
       // 7. Accordion content: Deepfake Classifier
