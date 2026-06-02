@@ -41,5 +41,11 @@ env/
 wandb/
 
 # ─── Data / cache ─────────────────────────────────────────────────────────────
-!**/data/**
+# Exclude large local datasets (e.g., GenImage/Julien-Lucas)
+**/data/genimage/
+**/data/julienlucas/
+**/data/combined_dataset/
+**/data/visual/genimage/
+**/data/visual/julienlucas/
+**/data/visual/combined_dataset/
 .cache/
