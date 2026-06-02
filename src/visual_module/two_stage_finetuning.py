@@ -82,7 +82,7 @@ def freeze_encoder_layers(model, num_layers_to_freeze=10):
 
 # ── Model loader ───────────────────────────────────────────────────────────────
 
-BASE_MODEL_ID = "dima806/ai_vs_human_generated_image_detection"
+BASE_MODEL_ID = "capcheck/ai-image-detection"
 
 
 def load_model_from(source="base", device=None):

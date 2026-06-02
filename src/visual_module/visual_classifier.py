@@ -7,7 +7,7 @@ import numpy as np
 class VisualClassifier:
     def __init__(
         self,
-        model_name_or_path="dima806/ai_vs_human_generated_image_detection",
+        model_name_or_path="capcheck/ai-image-detection",
         delta_path=None,
     ):
         """
@@ -86,7 +86,7 @@ class VisualClassifier:
 
 def save_weight_delta(
     fine_tuned_model,
-    base_model_name="dima806/ai_vs_human_generated_image_detection",
+    base_model_name="capcheck/ai-image-detection",
     output_path="./fine_tuned_model_delta/weight_delta.pt",
     threshold: float = 1e-9,
 ):
@@ -211,7 +211,7 @@ def compute_metrics(eval_pred):
     }
 
 def fine_tune_model(
-    model_name="dima806/ai_vs_human_generated_image_detection",
+    model_name="capcheck/ai-image-detection",
     dataset_name="julienlucas/midjourney-dalle-sd-nanobananapro-dataset",
     output_dir="./fine_tuned_model",
     epochs=3,
