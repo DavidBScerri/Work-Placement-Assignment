@@ -168,65 +168,59 @@ def fetch_deepfakejudge(num_samples, seed=42, hf_token=None):
     if hf_token is None:
         hf_token = os.environ.get("HF_TOKEN", True)
         
-    stream = load_dataset("MBZUAI/DeepfakeJudge-Dataset", split="train", streaming=True, token=hf_token)
+    # The dataset uses `data.jsonl` instead of `metadata.jsonl`, causing `datasets`
+    # to silently drop all labels when yielding images. We explicitly load the JSONL
+    # first, and fetch the corresponding image bytes manually via HfFileSystem.
+    json_url = "hf://datasets/MBZUAI/DeepfakeJudge-Dataset/dfj-meta/dfj-meta-pointwise/train/data.jsonl"
+    stream = load_dataset("json", data_files=json_url, split="train", streaming=True, token=hf_token)
     stream = stream.shuffle(seed=seed, buffer_size=5000)
     
     target_per_class = num_samples // 2
     
     def gen():
+        from huggingface_hub import HfFileSystem
+        import io
+        fs = HfFileSystem(token=hf_token)
+        
         real_count = 0
         ai_count = 0
         for ex in stream:
             if real_count >= target_per_class and ai_count >= target_per_class:
                 break
                 
-            img = ex.get("image")
-            if img is None:
-                continue
-                
-            if not isinstance(img, Image.Image):
-                if isinstance(img, bytes):
-                    img = Image.open(io.BytesIO(img)).convert("RGB")
-            else:
-                img = img.convert("RGB")
-                
-            # Attempt to determine label from common keys
-            # Often it's 'label', 'is_fake', 'class'
-            label_val = None
-            for key in ["label", "is_fake", "class", "target"]:
-                if key in ex:
-                    label_val = ex[key]
-                    break
-            
-            if label_val is None:
-                # Fallback: check file path if available
-                path = str(ex.get("image_path", "")).lower()
-                if "real" in path or "authentic" in path:
-                    label_val = 0
-                elif "fake" in path or "ai" in path or "generated" in path:
-                    label_val = 1
-                else:
-                    label_val = 1 # Assume fake if we can't tell, though risky
-            
-            # Standardize
-            val_str = str(label_val).lower()
-            if val_str in ['0', 'real', 'human', 'authentic', 'false']:
+            label_val = ex.get("label", "").lower()
+            if label_val in ["real", "authentic", "human"]:
                 label = 0
             else:
                 label = 1
+                
+            if label == 0 and real_count >= target_per_class:
+                continue
+            if label == 1 and ai_count >= target_per_class:
+                continue
+                
+            image_paths = ex.get("images", [])
+            if not image_paths:
+                continue
             
-            if label == 0 and real_count < target_per_class:
+            image_rel_path = image_paths[0]
+            # Construct the full HfFileSystem path
+            full_path = f"datasets/MBZUAI/DeepfakeJudge-Dataset/dfj-meta/dfj-meta-pointwise/train/{image_rel_path}"
+            
+            try:
+                with fs.open(full_path, "rb") as f:
+                    img_bytes = f.read()
+                img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+            except Exception as e:
+                print(f"Failed to load {full_path}: {e}")
+                continue
+            
+            if label == 0:
                 real_count += 1
-                yield {"image": img, "label": label}
-                total = real_count + ai_count
-                if total % 1000 == 0:
-                    print(f"   ... fetched {total}/{num_samples} samples")
-            elif label == 1 and ai_count < target_per_class:
+            else:
                 ai_count += 1
-                yield {"image": img, "label": label}
-                total = real_count + ai_count
-                if total % 1000 == 0:
-                    print(f"   ... fetched {total}/{num_samples} samples")
+                
+            yield {"image": img, "label": label}
                 
         print(f"✅ Fetched {real_count} real and {ai_count} AI DeepfakeJudge samples.")
 
