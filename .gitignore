@@ -42,10 +42,9 @@ wandb/
 
 # ─── Data / cache ─────────────────────────────────────────────────────────────
 # Exclude large local datasets (e.g., GenImage/Julien-Lucas)
-**/data/genimage/
-**/data/julienlucas/
-**/data/combined_dataset/
-**/data/visual/genimage/
-**/data/visual/julienlucas/
+**/data/visual/temp_downloads/
 **/data/visual/combined_dataset/
+**/data/visual/ntire/
+**/data/visual/deepfakejudge/
+**/data/visual/julienlucas/
 .cache/
