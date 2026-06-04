@@ -159,79 +159,86 @@ def fetch_deepfakejudge(num_samples, seed=42, hf_token=None):
     Stream MBZUAI/DeepfakeJudge-Dataset and dynamically pick num_samples (balanced).
     Requires a valid Hugging Face token with access to gated repos.
     """
-    print(f"\n📡 Streaming MBZUAI/DeepfakeJudge-Dataset to fetch {num_samples} balanced samples...")
+    from huggingface_hub import hf_hub_download
+    import concurrent.futures
+    from tqdm import tqdm
+    
+    print(f"\n📡 Fetching MBZUAI/DeepfakeJudge-Dataset ({num_samples} balanced samples)...")
     if not hf_token and not os.environ.get("HF_TOKEN"):
         print("⚠️ Warning: No HF_TOKEN provided. Falling back to huggingface-cli cached token. This gated dataset might fail to load if not logged in.")
         hf_token = True # Instruct load_dataset to use the cached token
         
-    # If hf_token is None, fallback to environ
     if hf_token is None:
         hf_token = os.environ.get("HF_TOKEN", True)
         
-    # The dataset uses `data.jsonl` instead of `metadata.jsonl`, causing `datasets`
-    # to silently drop all labels when yielding images. We explicitly load the JSONL
-    # first, and fetch the corresponding image bytes manually via HfFileSystem.
     json_url = "hf://datasets/MBZUAI/DeepfakeJudge-Dataset/dfj-meta/dfj-meta-pointwise/train/data.jsonl"
-    stream = load_dataset("json", data_files=json_url, split="train", streaming=True, token=hf_token)
-    stream = stream.shuffle(seed=seed, buffer_size=5000)
+    print("Loading DeepfakeJudge metadata...")
+    ds = load_dataset("json", data_files=json_url, split="train", token=hf_token)
     
     target_per_class = num_samples // 2
     
-    def gen():
-        from huggingface_hub import HfFileSystem
-        import io
-        fs = HfFileSystem(token=hf_token)
-        
-        real_count = 0
-        ai_count = 0
-        for ex in stream:
-            if real_count >= target_per_class and ai_count >= target_per_class:
-                break
-                
-            label_val = ex.get("label", "").lower()
-            if label_val in ["real", "authentic", "human"]:
-                label = 0
-            else:
-                label = 1
-                
-            if label == 0 and real_count >= target_per_class:
-                continue
-            if label == 1 and ai_count >= target_per_class:
-                continue
-                
-            image_paths = ex.get("images", [])
-            if not image_paths:
-                continue
-            
-            image_rel_path = image_paths[0]
-            # Construct the full HfFileSystem path
-            full_path = f"datasets/MBZUAI/DeepfakeJudge-Dataset/dfj-meta/dfj-meta-pointwise/train/{image_rel_path}"
-            
-            try:
-                with fs.open(full_path, "rb") as f:
-                    img_bytes = f.read()
-                img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-            except Exception as e:
-                print(f"Failed to load {full_path}: {e}")
-                continue
-            
-            if label == 0:
-                real_count += 1
-            else:
-                ai_count += 1
-                
-            yield {"image": img, "label": label}
-                
-        print(f"✅ Fetched {real_count} real and {ai_count} AI DeepfakeJudge samples.")
+    print("Filtering and balancing dataset...")
+    real_ds = ds.filter(lambda x: str(x.get("label", "")).lower() in ["real", "authentic", "human"])
+    fake_ds = ds.filter(lambda x: str(x.get("label", "")).lower() not in ["real", "authentic", "human"])
+    
+    # Cap to target amount
+    real_ds = real_ds.select(range(min(len(real_ds), target_per_class)))
+    fake_ds = fake_ds.select(range(min(len(fake_ds), target_per_class)))
+    
+    subset = concatenate_datasets([real_ds, fake_ds]).shuffle(seed=seed)
+    
+    print(f"✅ Found {len(real_ds)} real and {len(fake_ds)} AI DeepfakeJudge metadata records.")
+    
+    # Extract relative paths
+    relative_paths = [f"dfj-meta/dfj-meta-pointwise/train/{p[0]}" for p in subset["images"] if p]
+    
+    print(f"Downloading {len(relative_paths)} images in parallel (this is much faster!)...")
+    
+    def download_image(path):
+        try:
+            return hf_hub_download(repo_id="MBZUAI/DeepfakeJudge-Dataset", filename=path, repo_type="dataset", token=hf_token)
+        except Exception as e:
+            return None
 
+    absolute_paths = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
+        # Use tqdm to show progress
+        for result in tqdm(executor.map(download_image, relative_paths), total=len(relative_paths), desc="Downloading DeepfakeJudge images"):
+            absolute_paths.append(result)
+            
+    # Filter out failures
+    valid_indices = [i for i, p in enumerate(absolute_paths) if p is not None]
+    subset = subset.select(valid_indices)
+    valid_paths = [absolute_paths[i] for i in valid_indices]
+    
+    # Standardize label (0 for real, 1 for fake)
+    def map_label(example):
+        label_val = str(example.get("label", "")).lower()
+        example["label"] = 0 if label_val in ["real", "authentic", "human"] else 1
+        return example
+        
+    subset = subset.map(map_label, desc="Mapping labels")
+    
+    # Add absolute paths and cast to HFImage
+    subset = subset.add_column("image_path", valid_paths)
+    subset = subset.cast_column("image_path", HFImage())
+    
+    # Rename columns to match what's expected
+    subset = subset.remove_columns(["images"])
+    subset = subset.rename_column("image_path", "image")
+    
+    # Keep only image and label
+    cols_to_remove = [c for c in subset.column_names if c not in ["image", "label"]]
+    subset = subset.remove_columns(cols_to_remove)
+    
+    # Cast label to ClassLabel
     features = Features({
         "image": HFImage(),
         "label": ClassLabel(names=["real", "ai"])
     })
+    subset = subset.cast(features)
     
-    ds = Dataset.from_generator(gen, features=features)
-    ds = ds.shuffle(seed=seed)
-    return ds
+    return subset
 
 def split_dataset_balanced(ds, seed=42):
     """
