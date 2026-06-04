@@ -168,6 +168,15 @@ def load_weight_delta(model, delta_path, device=None):
     checkpoint = torch.load(delta_path, map_location=device or "cpu", weights_only=False)
     delta      = checkpoint["delta"]
     fmt        = checkpoint.get("dtype", "float16")
+    
+    # Check base model match if recorded
+    if "base_model" in checkpoint:
+        expected_base = checkpoint["base_model"]
+        if hasattr(model, "name_or_path") and model.name_or_path != expected_base:
+            print(f"⚠️ Warning: Delta was created for '{expected_base}', but applied to '{model.name_or_path}'.")
+        elif hasattr(model, "config") and hasattr(model.config, "_name_or_path") and model.config._name_or_path != expected_base:
+            print(f"⚠️ Warning: Delta was created for '{expected_base}', but applied to '{model.config._name_or_path}'.")
+            
     state      = model.state_dict()
 
     for key, payload in delta.items():
