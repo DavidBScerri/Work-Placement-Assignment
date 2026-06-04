@@ -35,7 +35,7 @@ env/
 # ─── Training outputs / checkpoints ───────────────────────────────────────────
 # Full model directories are too large for Git (hundreds of MB).
 # Only lightweight LoRA adapters or weight-delta files should be committed.
-**/outputs/
+**/outputs/models/
 **/checkpoints/
 **/finetuned_model/
 wandb/
