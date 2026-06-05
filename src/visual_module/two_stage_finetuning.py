@@ -81,8 +81,8 @@ def freeze_encoder_layers(model, num_layers_to_freeze=10):
 
 
 # ── Model loader ───────────────────────────────────────────────────────────────
-
-BASE_MODEL_ID = "dima806/ai_vs_human_generated_image_detection"
+# You can change the base model here
+BASE_MODEL_ID = "dima806/ai_vs_real_image_detection"
 
 
 def load_model_from(source="base", device=None):

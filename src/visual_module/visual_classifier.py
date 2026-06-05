@@ -7,7 +7,7 @@ import numpy as np
 class VisualClassifier:
     def __init__(
         self,
-        model_name_or_path="dima806/ai_vs_human_generated_image_detection",
+        model_name_or_path="dima806/ai_vs_real_image_detection",
         delta_path=None,
     ):
         """
@@ -220,7 +220,7 @@ def compute_metrics(eval_pred):
     }
 
 def fine_tune_model(
-    model_name="dima806/ai_vs_human_generated_image_detection",
+    model_name="dima806/ai_vs_real_image_detection",
     dataset_name="../../data/visual/combined_dataset",
     output_dir="./fine_tuned_model",
     epochs=3,
