@@ -1,13 +1,6 @@
 """
-two_stage_finetuning.py
-========================
 Helper utilities for the two-stage fine-tuning notebook.
-
-Stage 1 – fine-tune on a small streamed subset of nebula/GenImage-arrow
-Stage 2 – continue fine-tuning on julienlucas/midjourney-dalle-sd-nanobananapro-dataset
-
-This module is imported by the notebook; all heavy lifting lives here so
-the notebook stays beginner-friendly.
+Stage 1: fine-tune on GenImage, Stage 2: continue on julienlucas.
 """
 
 import os, json, io, torch, numpy as np
@@ -26,7 +19,6 @@ from sklearn.metrics import (
     confusion_matrix,
 )
 
-# ── helpers ────────────────────────────────────────────────────────────────────
 
 def get_device():
     """Return the best available device (CUDA > MPS > CPU)."""
@@ -48,25 +40,18 @@ def compute_metrics(eval_pred):
     return {"accuracy": acc, "f1": f1, "precision": precision, "recall": recall}
 
 
-# ── Layer freezing ─────────────────────────────────────────────────────────
-
 def freeze_encoder_layers(model, num_layers_to_freeze=10):
     """
-    Freeze the first N encoder layers of a ViT model.
+    Freeze the first N encoder layers of a ViT model, preserving general
+    visual features while allowing the top layers and classifier head to adapt.
 
-    This preserves the model's general visual features (edges, textures,
-    shapes) while allowing the last few layers and the classifier head to
-    adapt to AI-vs-real classification.
-
-    For the dima806 ViT with 12 encoder layers:
-      freeze=10 → last 2 layers + head trainable (~14 M params)
-      freeze=8  → last 4 layers + head trainable (~28 M params)
+    Args:
+        model: ViT model instance.
+        num_layers_to_freeze: Number of layers to freeze from the bottom.
     """
-    # Freeze patch + position embeddings
     for param in model.vit.embeddings.parameters():
         param.requires_grad = False
 
-    # Freeze the first N transformer blocks
     total_layers = len(model.vit.encoder.layer)
     n = min(num_layers_to_freeze, total_layers)
     for i in range(n):
@@ -75,13 +60,11 @@ def freeze_encoder_layers(model, num_layers_to_freeze=10):
 
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total = sum(p.numel() for p in model.parameters())
-    print(f"  🧊  Froze {n}/{total_layers} encoder layers + embeddings")
-    print(f"      Trainable: {trainable:,} / {total:,} params "
+    print(f"  Froze {n}/{total_layers} encoder layers + embeddings")
+    print(f"  Trainable: {trainable:,} / {total:,} params "
           f"({100 * trainable / total:.1f}%)")
 
 
-# ── Model loader ───────────────────────────────────────────────────────────────
-# You can change the base model here
 BASE_MODEL_ID = "dima806/ai_vs_real_image_detection"
 
 
@@ -89,40 +72,29 @@ def load_model_from(source="base", device=None):
     """
     Load a model + processor from any source, ready for training or evaluation.
 
-    Parameters
-    ----------
-    source : str
-        One of:
-        - ``"base"`` → load the original dima806 HuggingFace model
-        - A local directory path (e.g. ``"outputs/models/run_01_genimage"``)
-        - A HuggingFace model ID
-    device : torch.device or None
-        Device to place the model on.  Auto-detected if None.
+    Args:
+        source: "base" for the original HuggingFace model, a local directory
+                path, or a HuggingFace model ID.
+        device: torch.device (auto-detected if None).
 
-    Returns
-    -------
-    (model, processor)
-        The model has a ``nn.Sequential(Dropout(0.3), Linear)`` classifier head
-        attached for consistency across all training runs.
+    Returns:
+        (model, processor)
     """
     if device is None:
         device = get_device()
 
     model_id = BASE_MODEL_ID if source == "base" else source
 
-    print(f"📦  Loading model from: {model_id}")
+    print(f"Loading model from: {model_id}")
     processor = AutoImageProcessor.from_pretrained(model_id)
     model = AutoModelForImageClassification.from_pretrained(
         model_id, ignore_mismatched_sizes=True
     ).to(device)
 
-
     n_params = sum(p.numel() for p in model.parameters())
-    print(f"✅  Model loaded  –  {n_params:,} parameters  (device: {device})")
+    print(f"Model loaded - {n_params:,} parameters (device: {device})")
     return model, processor
 
-
-# ── Preprocessing (shared for both datasets) ──────────────────────────────────
 
 def make_transform(processor):
     """
@@ -133,7 +105,6 @@ def make_transform(processor):
         images = examples["image"]
         if not isinstance(images, list):
             images = [images]
-        # Handle raw bytes (e.g. GenImage) as well as PIL Image objects
         converted = []
         for img in images:
             if isinstance(img, bytes):
@@ -148,13 +119,11 @@ def make_transform(processor):
 
 def make_augmented_transform(processor):
     """
-    Return a batched transform with data augmentation applied *before*
-    the model's image processor.  Used for training only.
+    Return a batched transform with data augmentation applied before
+    the model's image processor. Used for training only.
 
-    Augmentations (all stochastic, applied per-image):
-      - Random horizontal flip (50 %)
-      - Random JPEG re-compression at quality 50-95 (30 %)
-      - Random brightness / contrast jitter ±20 % (30 %)
+    Augmentations: random flip, JPEG re-compression, brightness/contrast
+    jitter, rotation, crop+resize, Gaussian blur, colour jitter.
     """
     import random
     from PIL import ImageEnhance
@@ -162,23 +131,17 @@ def make_augmented_transform(processor):
     def _augment_single(img):
         if random.random() < 0.5:
             img = img.transpose(Image.FLIP_LEFT_RIGHT)
-        # JPEG compression simulation — injects realistic artifacts
         if random.random() < 0.3:
             buf = io.BytesIO()
             img.save(buf, format="JPEG", quality=random.randint(50, 95))
             buf.seek(0)
             img = Image.open(buf).convert("RGB")
-        # Brightness / contrast jitter
         if random.random() < 0.3:
             img = ImageEnhance.Brightness(img).enhance(random.uniform(0.8, 1.2))
             img = ImageEnhance.Contrast(img).enhance(random.uniform(0.8, 1.2))
-        
-        # NEW: Random rotation (small angles — real photos are rarely perfectly level)
         if random.random() < 0.3:
             angle = random.uniform(-15, 15)
             img = img.rotate(angle, fillcolor=(128, 128, 128))
-       
-        # NEW: Random crop + resize (simulates different crops/shares of the same image)
         if random.random() < 0.3:
             w, h = img.size
             crop_ratio = random.uniform(0.8, 1.0)
@@ -187,17 +150,12 @@ def make_augmented_transform(processor):
             top = random.randint(0, h - new_h)
             img = img.crop((left, top, left + new_w, top + new_h))
             img = img.resize((w, h), Image.BILINEAR)
-        
-        # NEW: Random Gaussian blur (simulates real camera blur/social media compression)
         if random.random() < 0.2:
             from PIL import ImageFilter
             radius = random.uniform(0.5, 1.5)
             img = img.filter(ImageFilter.GaussianBlur(radius=radius))
-        
-        # NEW: Color jitter (saturation + hue)
         if random.random() < 0.3:
             img = ImageEnhance.Color(img).enhance(random.uniform(0.7, 1.3))
-        
         return img
 
     def _transform(examples):
@@ -219,7 +177,7 @@ def make_augmented_transform(processor):
 
 
 def collate_fn(examples):
-    """Custom collator – stacks pixel_values & labels into tensors."""
+    """Custom collator - stacks pixel_values & labels into tensors."""
     pixel_values = []
     for ex in examples:
         pv = ex["pixel_values"]
@@ -231,8 +189,6 @@ def collate_fn(examples):
         "labels": torch.tensor([ex["labels"] for ex in examples]),
     }
 
-
-# ── Training ──────────────────────────────────────────────────────────────────
 
 def run_training_stage(
     model,
@@ -253,35 +209,27 @@ def run_training_stage(
     early_stopping_patience=2,
 ):
     """
-    Fine-tune *model* on *train_ds* / *eval_ds* and save to *output_dir*.
+    Fine-tune model on train_ds/eval_ds and save to output_dir.
 
-    If *replay_ds* is provided, a random subset (sized as *replay_ratio* ×
-    len(train_ds)) is drawn from it and concatenated with *train_ds* before
-    training.  This implements **experience replay** to mitigate catastrophic
-    forgetting when fine-tuning across sequential stages.
+    Args:
+        replay_ds:    If provided, a balanced subset is concatenated with
+                      train_ds for experience replay.
+        replay_ratio: Size of replay subset relative to train_ds.
+        freeze_layers: If set, freeze the first N ViT encoder layers.
+        augment:      If True, apply data augmentation during training.
+        early_stopping_patience: Patience for early stopping (None to disable).
 
-    If *freeze_layers* is set (e.g. 10), the first N ViT encoder layers plus
-    the embedding layer are frozen so the model retains its general visual
-    features and only the top layers + classifier head are updated.
-
-    If *augment* is True, training images receive random flips, colour
-    jitter, and JPEG re-compression to improve generalisation.
-
-    Returns (trained_model, trainer).
+    Returns:
+        (trained_model, trainer)
     """
     print(f"\n{'='*60}")
-    print(f"  🚀  {stage_name}")
+    print(f"  {stage_name}")
     print(f"{'='*60}")
 
-    # ── Experience replay: mix previous-stage data into current stage ──
     if replay_ds is not None:
         n_replay = max(1, int(len(train_ds) * replay_ratio))
-
-        # Reset any transform set by a previous training stage so the
-        # original column names (e.g. "label") are accessible for filtering.
         replay_ds.reset_format()
 
-        # Balanced replay: 50/50 real/AI to prevent class bias
         real_replay = replay_ds.filter(lambda x: x["label"] == 0).shuffle(seed=42)
         ai_replay = replay_ds.filter(lambda x: x["label"] == 1).shuffle(seed=42)
         n_each = n_replay // 2
@@ -290,7 +238,6 @@ def run_training_stage(
             ai_replay.select(range(min(n_each, len(ai_replay)))),
         ]).shuffle(seed=42)
 
-        # Align schemas — keep only columns common to both datasets
         keep = set(train_ds.column_names) & set(replay_subset.column_names)
         drop_primary = [c for c in train_ds.column_names if c not in keep]
         drop_replay  = [c for c in replay_subset.column_names if c not in keep]
@@ -299,20 +246,16 @@ def run_training_stage(
         if drop_replay:
             replay_subset = replay_subset.remove_columns(drop_replay)
 
-        # Cast replay features to match train_ds features (e.g. binary → Image)
-        # so that concatenate_datasets doesn't choke on type mismatches.
         replay_subset = replay_subset.cast(train_ds.features)
 
         train_ds = concatenate_datasets([train_ds, replay_subset]).shuffle(seed=42)
-        print(f"  🔁  Experience replay: added {len(replay_subset)} samples "
+        print(f"  Experience replay: added {len(replay_subset)} samples "
               f"from previous stage ({replay_ratio:.0%} ratio) [balanced 50/50]")
-        print(f"  📊  Combined training set: {len(train_ds)} samples")
+        print(f"  Combined training set: {len(train_ds)} samples")
 
-    # ── Layer freezing: preserve general features, adapt only top layers ──
     if freeze_layers is not None:
         freeze_encoder_layers(model, num_layers_to_freeze=freeze_layers)
 
-    # Apply transforms (with optional augmentation for training)
     if augment:
         train_ds.set_transform(make_augmented_transform(processor))
     else:
@@ -341,12 +284,11 @@ def run_training_stage(
         weight_decay=weight_decay,
     )
 
-    # ── Early stopping ──
     callbacks = []
     if early_stopping_patience is not None:
         from transformers import EarlyStoppingCallback
         callbacks.append(EarlyStoppingCallback(early_stopping_patience=early_stopping_patience))
-        print(f"  ⏱️  Early stopping enabled (patience={early_stopping_patience})")
+        print(f"  Early stopping enabled (patience={early_stopping_patience})")
 
     trainer = Trainer(
         model=model,
@@ -363,11 +305,9 @@ def run_training_stage(
     trainer.save_model(output_dir)
     trainer.log_metrics("train", results.metrics)
     trainer.save_metrics("train", results.metrics)
-    print(f"  ✅  Model saved → {output_dir}")
+    print(f"  Model saved to {output_dir}")
     return model, trainer
 
-
-# ── Evaluation ─────────────────────────────────────────────────────────────────
 
 def evaluate_model(
     model,
@@ -380,11 +320,10 @@ def evaluate_model(
     label_names=None,
 ):
     """
-    Evaluate *model* on *test_ds* and save JSON metrics + confusion-matrix PNG.
+    Evaluate model on test_ds and save JSON metrics + confusion matrix PNG.
 
-    Parameters
-    ----------
-    output_prefix : str   e.g. 'genimage_stage1' — used for file naming.
+    Args:
+        output_prefix: String used for file naming (e.g. 'genimage_stage1').
     """
     import matplotlib
     matplotlib.use("Agg")
@@ -418,7 +357,6 @@ def evaluate_model(
     preds = np.argmax(predictions.predictions, axis=-1)
     labels = predictions.label_ids
 
-    # ── metrics ──
     report = classification_report(
         labels, preds, target_names=label_names, output_dict=True
     )
@@ -440,15 +378,14 @@ def evaluate_model(
     json_path = os.path.join(output_dir, f"{output_prefix}_eval_results.json")
     with open(json_path, "w") as f:
         json.dump(metrics, f, indent=2)
-    print(f"  📄  Metrics saved → {json_path}")
+    print(f"  Metrics saved to {json_path}")
 
-    # ── confusion matrix plot ──
     fig, ax = plt.subplots(figsize=(5, 4))
     im = ax.imshow(cm, cmap="Blues")
     ax.set_xticks([0, 1]); ax.set_yticks([0, 1])
     ax.set_xticklabels(label_names); ax.set_yticklabels(label_names)
     ax.set_xlabel("Predicted"); ax.set_ylabel("True")
-    ax.set_title(f"Confusion Matrix – {output_prefix}")
+    ax.set_title(f"Confusion Matrix - {output_prefix}")
     for i in range(2):
         for j in range(2):
             ax.text(j, i, str(cm[i, j]), ha="center", va="center",
@@ -458,9 +395,8 @@ def evaluate_model(
     png_path = os.path.join(output_dir, f"{output_prefix}_confusion_matrix.png")
     fig.savefig(png_path, dpi=150)
     plt.close(fig)
-    print(f"  🖼️   Confusion matrix saved → {png_path}")
+    print(f"  Confusion matrix saved to {png_path}")
 
-    # ── print summary ──
     print(f"\n  {'─'*40}")
     print(f"  Accuracy  : {acc:.4f}")
     print(f"  Precision : {prec:.4f}")

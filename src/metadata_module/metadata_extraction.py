@@ -9,8 +9,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-# --- Configuration ---
-
 AI_KEYWORDS = [
     "openai",
     "dall-e",
@@ -79,7 +77,6 @@ BINARY_MARKERS = [
     b"flux",
 ]
 
-# --- Output Models ---
 
 class FeatureSet(BaseModel):
     has_make: bool = False
@@ -108,7 +105,6 @@ class AnalysisResult(BaseModel):
     decision: str
     rationale: list[str]
 
-# --- Metadata extraction utilities ---
 
 def run_exiftool(image_path: Path) -> dict[str, Any]:
     cmd = [
@@ -165,7 +161,6 @@ def scan_binary_markers(image_path: Path) -> list[str]:
             hits.append(marker.decode("utf-8", errors="ignore"))
     return sorted(set(hits))
 
-# --- Heuristics and scoring ---
 
 def find_keyword_hits(flat: dict[str, str]) -> list[str]:
     haystack = " ".join([f"{k} {v}" for k, v in flat.items()])
@@ -253,7 +248,6 @@ def score_features(features: FeatureSet) -> tuple[float, list[str]]:
     score = 0.50
     rationale: list[str] = []
 
-    # Strong positive evidence
     if features.has_ai_claim:
         score += 0.35
         rationale.append("Explicit AI-related generator or provenance signal found.")
@@ -278,7 +272,6 @@ def score_features(features: FeatureSet) -> tuple[float, list[str]]:
         score += 0.05
         rationale.append("Timestamp pattern looks unusually clean/perfect.")
 
-    # Camera-origin evidence reduces AI suspicion slightly, but not too much
     camera_evidence_count = sum([
         features.has_make,
         features.has_model,
@@ -289,12 +282,10 @@ def score_features(features: FeatureSet) -> tuple[float, list[str]]:
     if camera_evidence_count >= 3:
         score -= 0.20
         rationale.append("Rich camera metadata present.")
-
     elif camera_evidence_count == 2:
         score -= 0.10
         rationale.append("Some camera metadata present.")
 
-    # Clamp
     score = max(0.01, min(0.99, score))
 
     return score, rationale
@@ -309,7 +300,6 @@ def decide(prob: float, features: FeatureSet) -> str:
         return "likely_camera_origin"
     return "uncertain"
 
-# --- Main analysis functions ---
 
 def analyse_image(image_path: str) -> AnalysisResult:
     path = Path(image_path)

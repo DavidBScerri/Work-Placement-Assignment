@@ -14,12 +14,10 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from PIL import Image
 
-# Add project root to sys.path so we can import from src.*
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-# Import pipeline dependencies
 from src.metadata_module import analyse_image, AnalysisResult
 from src.integration_pipeline.fusion import (
     get_fusion_strategy,
@@ -28,23 +26,15 @@ from src.integration_pipeline.fusion import (
 )
 from src.visual_module.gradcam import generate_gradcam_overlay
 
-# ---------------------------------------------------------------------------
-# Global State for Server Tracking
-# ---------------------------------------------------------------------------
 _active_server = None
 _server_thread = None
 
 
-# ---------------------------------------------------------------------------
-# Pipeline Request Handler
-# ---------------------------------------------------------------------------
 class PipelineRequestHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
-        # Suppress logging request noise to keep the notebook output clean
-        pass
+        pass  # suppress request logging noise
 
     def do_GET(self):
-        # Serve the single-page HTML application
         if self.path == "/" or self.path == "/index.html":
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -61,7 +51,6 @@ class PipelineRequestHandler(BaseHTTPRequestHandler):
             self.wfile.write(b"Not Found")
 
     def do_POST(self):
-        # Handle pipeline execution requests
         if self.path == "/api/analyse":
             content_type = self.headers.get("Content-Type", "")
             if not content_type.startswith("multipart/form-data"):
@@ -73,7 +62,6 @@ class PipelineRequestHandler(BaseHTTPRequestHandler):
             content_length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(content_length)
 
-            # Extract multipart boundary
             boundary_match = re.search(r'boundary=([^;]+)', content_type)
             if not boundary_match:
                 self.send_response(400)
@@ -87,7 +75,6 @@ class PipelineRequestHandler(BaseHTTPRequestHandler):
             file_data = None
             params = {}
 
-            # Manually parse fields (avoids deprecated cgi module in Python 3.13+)
             for part in parts:
                 if not part.strip() or part == b"--\r\n" or part == b"--":
                     continue
@@ -97,7 +84,6 @@ class PipelineRequestHandler(BaseHTTPRequestHandler):
                 
                 header_section, value_section = part.split(b'\r\n\r\n', 1)
                 
-                # Clean up leading/trailing linebreaks
                 if header_section.startswith(b'\r\n'):
                     header_section = header_section[2:]
                 if value_section.endswith(b'\r\n'):
@@ -122,11 +108,9 @@ class PipelineRequestHandler(BaseHTTPRequestHandler):
                 return
 
             try:
-                # Retrieve models from server object
                 visual_classifier = self.server.visual_classifier
                 deepfake_classifier = self.server.deepfake_classifier
 
-                # Run pipeline
                 result = run_analysis_pipeline(file_data, params, visual_classifier, deepfake_classifier)
                 
                 self.send_response(200)
@@ -134,7 +118,6 @@ class PipelineRequestHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(json.dumps(result).encode("utf-8"))
             except Exception as e:
-                import traceback
                 traceback.print_exc()
                 self.send_response(500)
                 self.send_header("Content-Type", "application/json")
@@ -142,16 +125,12 @@ class PipelineRequestHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"error": str(e)}).encode("utf-8"))
 
 
-# ---------------------------------------------------------------------------
-# Core Analysis Wrapper
-# ---------------------------------------------------------------------------
 def run_analysis_pipeline(file_data, params, visual_classifier, deepfake_classifier):
-    # Load as PIL Image
     pil_image = Image.open(io.BytesIO(file_data))
     if pil_image.mode != "RGB":
         pil_image = pil_image.convert("RGB")
 
-    # Step 1: Metadata Module (needs path to run exiftool)
+    # Metadata analysis (needs file path for exiftool)
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
         tmp.write(file_data)
         tmp_path = tmp.name
@@ -161,11 +140,11 @@ def run_analysis_pipeline(file_data, params, visual_classifier, deepfake_classif
     finally:
         os.unlink(tmp_path)
 
-    # Step 2: Visual Classifier (Whole Image)
+    # Visual classifier (whole image)
     visual_result = visual_classifier.predict(pil_image)
     visual_ai_prob = extract_visual_ai_probability(visual_result)
 
-    # Step 2b: GradCAM heatmap for whole image
+    # GradCAM heatmap for whole image
     try:
         visual_gradcam_b64 = generate_gradcam_overlay(
             model=visual_classifier.model,
@@ -178,7 +157,7 @@ def run_analysis_pipeline(file_data, params, visual_classifier, deepfake_classif
         print(f"[GradCAM] Whole-image heatmap failed: {e}")
         visual_gradcam_b64 = None
 
-    # Step 3: Face crop detection & classification (unconditional)
+    # Face crop detection & classification
     face_res = deepfake_classifier.predict_face(pil_image)
     bbox = face_res.get("bbox")
     
@@ -191,7 +170,6 @@ def run_analysis_pipeline(file_data, params, visual_classifier, deepfake_classif
         face_padding = float(params.get("face_padding", 0.30))
         cropped_face = crop_face_region(pil_image, bbox, padding=face_padding)
         
-        # Save cropped face to base64
         buffered = io.BytesIO()
         cropped_face.save(buffered, format="JPEG")
         cropped_face_b64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
@@ -199,7 +177,6 @@ def run_analysis_pipeline(file_data, params, visual_classifier, deepfake_classif
         cropped_visual_result = visual_classifier.predict(cropped_face)
         cropped_visual_ai_prob = extract_visual_ai_probability(cropped_visual_result)
 
-        # GradCAM heatmap for cropped face
         try:
             cropped_gradcam_b64 = generate_gradcam_overlay(
                 model=visual_classifier.model,
@@ -212,7 +189,7 @@ def run_analysis_pipeline(file_data, params, visual_classifier, deepfake_classif
             print(f"[GradCAM] Cropped-face heatmap failed: {e}")
             cropped_gradcam_b64 = None
 
-    # Step 4: Decision Fusion
+    # Decision fusion
     strategy_name = params.get("fusion_strategy", "weighted_average")
     if strategy_name == "weighted_average":
         strategy = get_fusion_strategy(
@@ -244,7 +221,7 @@ def run_analysis_pipeline(file_data, params, visual_classifier, deepfake_classif
         cropped_visual_ai_prob=cropped_visual_ai_prob,
     )
 
-    # Step 5: Conditional Deepfake Analysis
+    # Conditional deepfake analysis
     deepfake_result_data = None
     if fusion_result.is_ai:
         deepfake_result = deepfake_classifier.predict(pil_image)
@@ -283,7 +260,6 @@ def run_analysis_pipeline(file_data, params, visual_classifier, deepfake_classif
         verdict = f"Probably Real (confidence: {1 - fusion_result.ai_probability:.2%})"
         verdict_type = "real"
 
-    # Map pydantic models to serializable dicts
     meta_features = meta_result.features
     meta_features_dict = {
         "has_make": meta_features.has_make,
@@ -333,9 +309,6 @@ def run_analysis_pipeline(file_data, params, visual_classifier, deepfake_classif
     }
 
 
-# ---------------------------------------------------------------------------
-# Utility functions
-# ---------------------------------------------------------------------------
 def find_free_port():
     for port in range(5000, 6000):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -357,7 +330,6 @@ class PipelineHTTPServer(HTTPServer):
 def start_server_thread(visual_classifier, deepfake_classifier):
     global _active_server, _server_thread
     
-    # Shut down existing server if active
     if _active_server is not None:
         print("Stopping existing web server...")
         _active_server.shutdown()
@@ -378,8 +350,8 @@ def start_server_thread(visual_classifier, deepfake_classifier):
     _server_thread.start()
 
     url = f"http://127.0.0.1:{port}"
-    print(f"\n🚀 Seeing through Deepfakes web interface is live!")
-    print(f"🔗 URL: {url}")
+    print(f"\nSeeing through Deepfakes web interface is live!")
+    print(f"URL: {url}")
     print("Opening browser window automatically...")
     webbrowser.open(url)
     return url
@@ -395,9 +367,6 @@ def stop_server():
         _active_server = None
 
 
-# ---------------------------------------------------------------------------
-# Standalone Execution (for terminal testing)
-# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     print("Starting in Standalone mode. Initializing models...")
     from src.visual_module.visual_classifier import VisualClassifier
@@ -421,7 +390,7 @@ if __name__ == "__main__":
 
     port = find_free_port()
     server = PipelineHTTPServer(('127.0.0.1', port), PipelineRequestHandler, visual_model, deepfake_model)
-    print(f"\n🚀 Standalone server running at http://127.0.0.1:{port}")
+    print(f"\nStandalone server running at http://127.0.0.1:{port}")
     webbrowser.open(f"http://127.0.0.1:{port}")
     try:
         server.serve_forever()

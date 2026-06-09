@@ -1,25 +1,11 @@
 """
-Decision-Fusion Engine
-======================
-Combines outputs from the **Metadata Module** and the **Visual Classifier Module**
-into a single AI-generated probability using one of several selectable strategies.
+Decision-Fusion Engine — combines outputs from the Metadata Module and
+the Visual Classifier into a single AI-generated probability.
 
-Strategies
-----------
-1. WeightedAverageFusion  — Weighted linear combination with model-accuracy scaling.
-2. ConservativeThresholdFusion — Flags AI if **both** modules agree above their
-   respective confidence thresholds (AND-gate — avoids false positives from
-   metadata's tendency to produce 0.99 scores whenever any AI marker is present).
-3. BayesianFusion — Treats each module as an independent evidence source and
-   applies Bayes' rule with a configurable prior to produce a posterior.
-
-Usage
------
-    from src.integration_pipeline.fusion import get_fusion_strategy, extract_visual_ai_probability
-
-    strategy = get_fusion_strategy("weighted_average", w_meta=0.3, w_visual=0.7)
-    result   = strategy.fuse(metadata_ai_prob=0.92, visual_ai_prob=0.78)
-    print(result)
+Strategies:
+    1. WeightedAverageFusion  — weighted linear combination with accuracy scaling.
+    2. ConservativeThresholdFusion — flags AI only when both modules agree (AND-gate).
+    3. BayesianFusion — treats each module as independent evidence and applies Bayes' rule.
 """
 
 from __future__ import annotations
@@ -30,20 +16,15 @@ from typing import Any
 from PIL import Image
 
 
-# ---------------------------------------------------------------------------
-# Helper: Crop Face Region
-# ---------------------------------------------------------------------------
-
 def crop_face_region(image: Image.Image, bbox: list[float] | tuple[float, float, float, float], padding: float = 0.3) -> Image.Image:
     """
-    Crops a face bounding box from an image, adding a relative padding margin on each side,
-    and clamping the coordinates to the image boundaries.
-    
+    Crops a face bounding box from an image with relative padding, clamped to image boundaries.
+
     Args:
         image: PIL Image object.
         bbox: Bounding box coordinates [x1, y1, x2, y2].
-        padding: Padding factor (e.g. 0.3 for 30% padding).
-        
+        padding: Padding factor (e.g. 0.3 for 30%).
+
     Returns:
         Cropped face PIL Image.
     """
@@ -53,11 +34,9 @@ def crop_face_region(image: Image.Image, bbox: list[float] | tuple[float, float,
     box_w = x2 - x1
     box_h = y2 - y1
     
-    # Calculate padding pixels
     pad_w = box_w * padding
     pad_h = box_h * padding
     
-    # Expand coordinates
     new_x1 = max(0, x1 - pad_w)
     new_y1 = max(0, y1 - pad_h)
     new_x2 = min(w, x2 + pad_w)
@@ -66,49 +45,29 @@ def crop_face_region(image: Image.Image, bbox: list[float] | tuple[float, float,
     return image.crop((new_x1, new_y1, new_x2, new_y2))
 
 
-
-# ---------------------------------------------------------------------------
-# Result dataclass
-# ---------------------------------------------------------------------------
-
 @dataclass
 class FusionResult:
     """Output of every fusion strategy."""
-    ai_probability: float           # Combined P(AI) in [0, 1]
-    is_ai: bool                     # True if ai_probability >= decision_threshold
-    formula_name: str               # Human-readable strategy name
-    explanation: dict[str, Any] = field(default_factory=dict)  # Per-strategy breakdown
+    ai_probability: float
+    is_ai: bool
+    formula_name: str
+    explanation: dict[str, Any] = field(default_factory=dict)
 
-
-# ---------------------------------------------------------------------------
-# Helper: extract a comparable [0, 1] AI probability from the visual classifier
-# ---------------------------------------------------------------------------
 
 def extract_visual_ai_probability(visual_result: dict) -> float:
     """
-    Normalises the VisualClassifier.predict() output into a single float
-    in [0, 1] representing P(AI-generated).
+    Normalises VisualClassifier.predict() output into a float in [0, 1]
+    representing P(AI-generated).
 
-    The classifier returns::
-
-        {
-            "prediction": "AI Generated" | "Real",
-            "confidence": float,
-            "raw_label": str,
-            "all_scores": {"human": float, "AI-generated": float}
-        }
-
-    We prefer `all_scores["AI-generated"]` for a direct probability;
-    if that key is missing we derive it from the top-level fields.
+    Prefers all_scores["AI-generated"] for a direct probability;
+    falls back to deriving it from the top-level prediction/confidence.
     """
     all_scores = visual_result.get("all_scores", {})
 
-    # Try the direct score first
     ai_score = all_scores.get("AI-generated")
     if ai_score is not None:
         return float(ai_score)
 
-    # Fallback: interpret confidence relative to predicted class
     prediction = visual_result.get("prediction", "")
     confidence = float(visual_result.get("confidence", 0.5))
 
@@ -117,10 +76,6 @@ def extract_visual_ai_probability(visual_result: dict) -> float:
     else:
         return 1.0 - confidence
 
-
-# ---------------------------------------------------------------------------
-# Abstract base
-# ---------------------------------------------------------------------------
 
 class FusionStrategy(ABC):
     """Base class for all decision-fusion strategies."""
@@ -136,47 +91,24 @@ class FusionStrategy(ABC):
         Combine AI-generated probabilities into one decision.
 
         Args:
-            metadata_ai_prob:       P(AI) from the metadata module (0–1).
-            visual_ai_prob:         P(AI) from the visual classifier (0–1).
-            cropped_visual_ai_prob: Optional P(AI) from the cropped face visual classifier.
-
-        Returns:
-            FusionResult with the combined probability and decision.
+            metadata_ai_prob:       P(AI) from the metadata module (0-1).
+            visual_ai_prob:         P(AI) from the visual classifier (0-1).
+            cropped_visual_ai_prob: Optional P(AI) from the cropped face classifier.
         """
 
 
-# ---------------------------------------------------------------------------
-# 1. Weighted Average Fusion
-# ---------------------------------------------------------------------------
-
 class WeightedAverageFusion(FusionStrategy):
     """
-    Weighted average fusion of metadata and visual AI probabilities.
-    
-    If a cropped face probability is provided, the visual component is enhanced
-    by taking the maximum of the whole-image visual probability and the cropped face
-    visual probability:
-        visual_prob_effective = max(visual_prob, cropped_visual_prob)
+    Weighted average of metadata and visual AI probabilities.
+    If a cropped face probability is provided, the visual component uses
+    max(visual_prob, cropped_visual_prob).
 
-    Formula:
-        eff_meta   = w_meta * meta_accuracy
-        eff_visual = w_visual * visual_accuracy
-        total      = eff_meta + eff_visual
-        
-        combined = (eff_meta * metadata_prob + eff_visual * visual_prob_effective) / total
-
-    Parameters
-    ----------
-    w_meta : float
-        Weight for the metadata module (default 0.3).
-    w_visual : float
-        Weight for the visual module (default 0.7).
-    decision_threshold : float
-        Combined score above which the image is classified AI (default 0.55).
-    meta_accuracy : float or None
-        Scale factor for the metadata weight (default 0.70).
-    visual_accuracy : float or None
-        Scale factor for the visual weight (default 0.83).
+    Args:
+        w_meta: Weight for metadata module (default 0.3).
+        w_visual: Weight for visual module (default 0.7).
+        decision_threshold: Score above which image is classified AI (default 0.55).
+        meta_accuracy: Scale factor for metadata weight (default 0.70).
+        visual_accuracy: Scale factor for visual weight (default 0.83).
     """
 
     def __init__(
@@ -199,7 +131,6 @@ class WeightedAverageFusion(FusionStrategy):
         visual_ai_prob: float,
         cropped_visual_ai_prob: float | None = None,
     ) -> FusionResult:
-        # Option B (MAX Operator): Take the maximum of whole-image and cropped face probabilities
         has_crop = (cropped_visual_ai_prob is not None)
         if has_crop:
             effective_visual_ai_prob = max(visual_ai_prob, cropped_visual_ai_prob)
@@ -241,33 +172,15 @@ class WeightedAverageFusion(FusionStrategy):
         )
 
 
-# ---------------------------------------------------------------------------
-# 2. Conservative (AND-gate) Threshold Fusion
-# ---------------------------------------------------------------------------
-
 class ConservativeThresholdFusion(FusionStrategy):
     """
-    Flags the image as AI-generated only when **both** modules agree
-    above their respective thresholds (a logical AND gate).
+    Flags AI only when both modules agree above their thresholds (AND-gate).
+    This avoids false positives from metadata's tendency to score 0.99 whenever
+    any AI marker (e.g. a C2PA tag) is present.
 
-    Why AND instead of OR?
-    ----------------------
-    The metadata module scores 0.99 whenever *any* AI-related EXIF tag
-    is present — even a single C2PA marker.  An OR gate would therefore
-    trigger on virtually every image that carries provenance metadata,
-    producing many false positives.  Requiring both modules to agree
-    eliminates that noise.
-
-    The combined probability is taken as the *minimum* of the two scores
-    when both thresholds are exceeded; otherwise it is the lower of the
-    two raw values (reflecting low confidence).
-
-    Parameters
-    ----------
-    meta_threshold : float
-        Metadata module must exceed this to count (default 0.70).
-    visual_threshold : float
-        Visual classifier must exceed this to count (default 0.65).
+    Args:
+        meta_threshold: Metadata module must exceed this (default 0.70).
+        visual_threshold: Visual classifier must exceed this (default 0.65).
     """
 
     def __init__(
@@ -313,50 +226,18 @@ class ConservativeThresholdFusion(FusionStrategy):
         )
 
 
-# ---------------------------------------------------------------------------
-# 3. Bayesian Fusion
-# ---------------------------------------------------------------------------
-
 class BayesianFusion(FusionStrategy):
     """
-    Bayesian evidence fusion treating each module's output as an
-    independent likelihood.
+    Bayesian evidence fusion treating each module as an independent likelihood.
 
-    Intuition (plain English)
-    -------------------------
-    Imagine you start with a "prior belief" that any random image has,
-    say, a 50 % chance of being AI-generated.  Then each module
-    provides its own evidence — the metadata score and the visual score.
-    Bayes' rule lets us combine these two independent pieces of
-    evidence into a single updated ("posterior") probability that
-    accounts for both.
+    Uses Bayes' rule with a configurable prior:
+        L_ai  = p1 * p2
+        L_real = (1-p1) * (1-p2)
+        P(AI | evidence) = (L_ai * prior) / (L_ai * prior + L_real * (1 - prior))
 
-    Formula
-    -------
-    Let:
-        p₁ = metadata AI probability
-        p₂ = visual AI probability
-        π  = prior P(AI) (default 0.5 — no prior bias)
-
-    Likelihood of observing both scores under "AI" hypothesis:
-        L_ai  = p₁ × p₂
-
-    Likelihood under "Real" hypothesis:
-        L_real = (1 − p₁) × (1 − p₂)
-
-    Posterior P(AI | evidence) via Bayes' rule:
-        P(AI | evidence) = (L_ai × π) / (L_ai × π + L_real × (1 − π))
-
-    If both modules are confident the image is AI, the posterior
-    shoots close to 1.  If they disagree, the posterior lands near 0.5.
-    If both say "real", the posterior drops toward 0.
-
-    Parameters
-    ----------
-    prior : float
-        Prior probability that any image is AI-generated (default 0.5).
-    decision_threshold : float
-        Posterior above which we classify as AI (default 0.55).
+    Args:
+        prior: Prior P(AI) for any image (default 0.5).
+        decision_threshold: Posterior above which we classify as AI (default 0.55).
     """
 
     def __init__(
@@ -373,7 +254,6 @@ class BayesianFusion(FusionStrategy):
         visual_ai_prob: float,
         cropped_visual_ai_prob: float | None = None,
     ) -> FusionResult:
-        # Clamp to avoid division-by-zero / log(0) edge cases
         eps = 1e-9
         p1 = max(eps, min(1 - eps, metadata_ai_prob))
         p2 = max(eps, min(1 - eps, visual_ai_prob))
@@ -399,18 +279,9 @@ class BayesianFusion(FusionStrategy):
                 "likelihood_real": round(likelihood_real, 6),
                 "posterior": round(posterior, 4),
                 "decision_threshold": self.decision_threshold,
-                "intuition": (
-                    "Both modules are combined as independent evidence sources. "
-                    "A posterior near 1.0 means both strongly agree the image is AI; "
-                    "near 0.0 means both agree it's real; near 0.5 means they disagree."
-                ),
             },
         )
 
-
-# ---------------------------------------------------------------------------
-# Registry
-# ---------------------------------------------------------------------------
 
 AVAILABLE_STRATEGIES: dict[str, type[FusionStrategy]] = {
     "weighted_average": WeightedAverageFusion,
@@ -424,14 +295,11 @@ def get_fusion_strategy(name: str, **kwargs) -> FusionStrategy:
     Factory that returns a configured FusionStrategy by name.
 
     Args:
-        name:   One of "weighted_average", "conservative_threshold", "bayesian".
-        **kwargs: Forwarded to the strategy's ``__init__``.
-
-    Returns:
-        An initialised FusionStrategy instance.
+        name:     One of "weighted_average", "conservative_threshold", "bayesian".
+        **kwargs: Forwarded to the strategy's __init__.
 
     Raises:
-        ValueError: If *name* is not recognised.
+        ValueError: If name is not recognised.
     """
     cls = AVAILABLE_STRATEGIES.get(name)
     if cls is None:

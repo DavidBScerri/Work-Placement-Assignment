@@ -16,9 +16,6 @@ class VisualClassifier:
         Args:
             model_name_or_path: HuggingFace model ID or local path to a full model.
             delta_path: Optional path to a .pt delta file produced by save_weight_delta().
-                        When provided, the base model is loaded from model_name_or_path
-                        and the stored weight differences are applied on top, avoiding
-                        the need to store a full 327 MB model file in the repository.
         """
         self.device = torch.device(
             "mps" if torch.backends.mps.is_available()
@@ -40,14 +37,13 @@ class VisualClassifier:
 
     def predict(self, image):
         """
-        Predicts whether an image is AI generated, Real, or Uncertain.
+        Predicts whether an image is AI generated or Real.
 
         Args:
             image: A PIL Image object.
-            uncertainty_threshold: Confidence threshold below which the model is "Uncertain".
 
         Returns:
-            A dictionary containing the prediction label and confidence score.
+            A dictionary with prediction label, confidence, raw label, and all scores.
         """
         if image.mode != 'RGB':
             image = image.convert('RGB')
@@ -63,10 +59,8 @@ class VisualClassifier:
         max_prob = max_prob.item()
         predicted_class_idx = predicted_class_idx.item()
         
-        # Get label from model config
         label = self.model.config.id2label[predicted_class_idx].lower()
         
-        # Map label to readable format
         if "human" in label or "real" in label:
             mapped_label = "Real"
         else:
@@ -80,10 +74,6 @@ class VisualClassifier:
         }
 
 
-# ---------------------------------------------------------------------------
-# Weight-delta helpers
-# ---------------------------------------------------------------------------
-
 def save_weight_delta(
     fine_tuned_model,
     base_model_name="",
@@ -91,36 +81,24 @@ def save_weight_delta(
     threshold: float = 1e-9,
 ):
     """
-    Saves weight differences between the fine-tuned model and the base model
-    using per-tensor int8 quantisation.
-
-    Encoding:
-        For each parameter tensor whose L∞ change exceeds `threshold`:
-            scale  = max_abs_diff / 127.0
-            stored = round(diff / scale).clamp(-127, 127)  [int8]
-        Reconstruction (done in load_weight_delta):
-            diff   ≈ stored.float() * scale
-
-    Results for this ViT (86 M params, all layers unfrozen):
-        Full model.safetensors : 327 MB  (❌ over GitHub 100 MB limit)
-        This delta file        :  ~82 MB  (✅ under GitHub 100 MB limit)
-        Max reconstruction err : < 0.00002  (negligible vs weight scale ~0.01–1.0)
+    Saves weight differences between the fine-tuned and base model using
+    per-tensor int8 quantisation (~82 MB vs 327 MB full model).
 
     Args:
-        fine_tuned_model: The trained model object (in memory after fine_tune_model()).
-        base_model_name:  HuggingFace model ID of the base model used for training.
+        fine_tuned_model: The trained model object.
+        base_model_name:  HuggingFace model ID of the base model.
         output_path:      Where to write the .pt delta file.
-        threshold:        Tensors whose L∞ change is below this are skipped (pure zeros).
+        threshold:        Tensors whose max change is below this are skipped.
+
     Returns:
         (output_path, size_mb)
     """
     print(f"Loading base model '{base_model_name}' to compute delta...")
     base_model = AutoModelForImageClassification.from_pretrained(base_model_name)
 
-    # Move both state dicts to CPU upfront to avoid any device mismatch
     ft_state   = {k: v.float().cpu() for k, v in fine_tuned_model.state_dict().items()}
     base_state = {k: v.float().cpu() for k, v in base_model.state_dict().items()}
-    del base_model  # free memory
+    del base_model
 
     delta     = {}
     unchanged = []
@@ -132,7 +110,6 @@ def save_weight_delta(
         if max_abs < threshold:
             unchanged.append(key)
             continue
-        # Per-tensor int8 quantisation — 4× smaller than float32, 2× smaller than float16
         scale = max_abs / 127.0
         quant = (diff / scale).round().clamp(-127, 127).to(torch.int8)
         delta[key] = {"q": quant, "s": scale}
@@ -144,7 +121,7 @@ def save_weight_delta(
     )
 
     size_mb = os.path.getsize(output_path) / 1024 / 1024
-    print(f"Delta saved → '{output_path}'")
+    print(f"Delta saved to '{output_path}'")
     print(f"  Changed parameters : {len(delta)}")
     print(f"  Unchanged (skipped): {len(unchanged)}")
     print(f"  File size          : {size_mb:.2f} MB")
@@ -153,15 +130,11 @@ def save_weight_delta(
 
 def load_weight_delta(model, delta_path, device=None):
     """
-    Applies a weight delta (produced by save_weight_delta) to an already-loaded
-    base model, modifying it in-place.
-
-    Supports both the int8-quantised format ({"q": int8_tensor, "s": scale})
-    and the legacy float16 format (raw half-precision tensor) for backwards
-    compatibility.
+    Applies a weight delta to an already-loaded base model in-place.
+    Supports int8-quantised and legacy float16 formats.
 
     Args:
-        model:      The base model instance — weights are updated in-place.
+        model:      The base model instance (weights updated in-place).
         delta_path: Path to the .pt file created by save_weight_delta().
         device:     torch.device to map tensors onto (defaults to CPU).
     """
@@ -169,15 +142,14 @@ def load_weight_delta(model, delta_path, device=None):
     delta      = checkpoint["delta"]
     fmt        = checkpoint.get("dtype", "float16")
     
-    # Check base model match if recorded
     if "base_model" in checkpoint:
         expected_base = checkpoint["base_model"]
         if hasattr(model, "name_or_path") and model.name_or_path != expected_base:
-            print(f"⚠️ Warning: Delta was created for '{expected_base}', but applied to '{model.name_or_path}'.")
+            print(f"Warning: Delta was created for '{expected_base}', but applied to '{model.name_or_path}'.")
         elif hasattr(model, "config") and hasattr(model.config, "_name_or_path") and model.config._name_or_path != expected_base:
-            print(f"⚠️ Warning: Delta was created for '{expected_base}', but applied to '{model.config._name_or_path}'.")
+            print(f"Warning: Delta was created for '{expected_base}', but applied to '{model.config._name_or_path}'.")
             
-    state      = model.state_dict()
+    state = model.state_dict()
 
     for key, payload in delta.items():
         # Backward compatibility for legacy sequential classifier head keys
@@ -190,19 +162,13 @@ def load_weight_delta(model, delta_path, device=None):
         if target_key not in state:
             continue
         if fmt == "int8" and isinstance(payload, dict):
-            # Dequantise: diff ≈ q * scale
             diff = payload["q"].float() * payload["s"]
         else:
-            # Legacy float16 delta
             diff = payload.float()
         state[target_key] = (state[target_key].float() + diff).to(state[target_key].dtype)
 
     model.load_state_dict(state)
 
-
-# ---------------------------------------------------------------------------
-# Training helpers
-# ---------------------------------------------------------------------------
 
 def compute_metrics(eval_pred):
     from sklearn.metrics import accuracy_score, precision_recall_fscore_support
@@ -227,9 +193,7 @@ def fine_tune_model(
     batch_size=16,
     learning_rate=2e-5
 ):
-    """
-    Fine-tunes the image classification model on the provided dataset.
-    """
+    """Fine-tunes the image classification model on the provided dataset."""
     from datasets import load_from_disk
     print(f"Loading dataset: {dataset_name}")
     
@@ -246,7 +210,6 @@ def fine_tune_model(
     model = AutoModelForImageClassification.from_pretrained(model_name, ignore_mismatched_sizes=True)
     
     def transforms(examples):
-        # Support both batched lists or individual dicts
         images = examples["image"] if isinstance(examples["image"], list) else [examples["image"]]
         images = [img.convert("RGB") for img in images]
         
@@ -258,7 +221,6 @@ def fine_tune_model(
     train_ds.set_transform(transforms)
     test_ds.set_transform(transforms)
     
-    # Calculate max steps
     gradient_accumulation_steps = 4
     steps_per_epoch = max_train_samples // (batch_size * gradient_accumulation_steps)
     max_steps = -1
@@ -270,7 +232,7 @@ def fine_tune_model(
         save_strategy="epoch",
         learning_rate=learning_rate,
         per_device_train_batch_size=batch_size,
-        gradient_accumulation_steps=gradient_accumulation_steps, # To fit in VRAM effectively
+        gradient_accumulation_steps=gradient_accumulation_steps,
         per_device_eval_batch_size=batch_size,
         num_train_epochs=epochs,
         max_steps=max_steps,
@@ -282,7 +244,6 @@ def fine_tune_model(
     )
     
     def collate_fn(examples):
-        # Handle case where pixel_values might be lists depending on mapping
         pixel_values = []
         for example in examples:
             pv = example["pixel_values"]
@@ -313,4 +274,3 @@ def fine_tune_model(
     trainer.save_state()
     
     return model, processor
-

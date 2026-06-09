@@ -17,14 +17,12 @@ class DeepfakeClassifier:
                  index_path="models/landmarks_index.faiss",
                  metadata_path="models/landmarks_metadata.json"):
         """
-        Initializes the Deepfake Classifier with multiple sub-models:
-          - MTCNN for face detection.
-          - A Places365 scene model via the birder library.
-          - A fine-tuned DINOv2 model for landmark-based analysis.
+        Initializes the Deepfake Classifier with sub-models for face detection,
+        scene classification, and landmark retrieval.
 
         Args:
             scene_model_name:     Birder model name for scene/Places365 classification.
-            landmark_model_name:  HuggingFace model ID for the landmark embedding model (e.g. DINOv2).
+            landmark_model_name:  HuggingFace model ID for landmark embeddings (DINOv2).
             index_path:           Path to the FAISS index file.
             metadata_path:        Path to the landmark metadata JSON file.
         """
@@ -34,11 +32,9 @@ class DeepfakeClassifier:
             else "cpu"
         )
 
-        # ── 1. Face Detection Model ──────────────────────────────────────────
         print("Loading Face Detection model: MTCNN")
         self.mtcnn = MTCNN(keep_all=True, device='cpu')
 
-        # ── 2. Scene Classification Model (Places365 via birder) ─────────────
         print(f"Loading Scene model: {scene_model_name}")
         try:
             (self.scene_model, self.scene_info) = birder.load_pretrained_model(scene_model_name, inference=True)
@@ -53,7 +49,6 @@ class DeepfakeClassifier:
             self.scene_model.eval()
             self.scene_info = None
 
-        # ── 3. Landmark Retrieval Model (DINOv2 + FAISS) ─────────────────────
         print(f"Loading Landmark Retrieval model: {landmark_model_name}")
         self.landmark_index = LandmarkIndex(
             model_name=landmark_model_name,
@@ -61,8 +56,6 @@ class DeepfakeClassifier:
             metadata_path=metadata_path,
             device=self.device
         )
-
-    # ── Inference helpers ────────────────────────────────────────────────────
 
     def predict_face(self, image):
         """
@@ -72,14 +65,12 @@ class DeepfakeClassifier:
             image: A PIL Image object.
 
         Returns:
-            dict with keys ``label``, ``confidence`` (face certainty), and ``bbox`` (bounding box [x1, y1, x2, y2] or None).
+            dict with keys ``label``, ``confidence``, and ``bbox``.
         """
-        # Detect face using MTCNN
         boxes, probs = self.mtcnn.detect(image)
         if boxes is None or len(boxes) == 0:
             return {"label": "No Face", "confidence": 0.0, "bbox": None}
         
-        # Select the index of the highest probability face (most evident face)
         idx = int(np.argmax(probs))
         face_certainty = float(probs[idx])
         
@@ -120,7 +111,7 @@ class DeepfakeClassifier:
 
     def predict_landmark(self, image, top_k=10, similarity_threshold=0.5):
         """
-        Identifies landmarks using a retrieval-based approach with DINOv2 and FAISS.
+        Identifies landmarks using DINOv2 embeddings and FAISS retrieval.
 
         Args:
             image:                A PIL Image object.
@@ -134,17 +125,13 @@ class DeepfakeClassifier:
 
     def predict(self, image, visual_classifier=None, threshold=0.5):
         """
-        Full integrated pipeline:
-          1. Optionally run the visual classifier for AI-generated confidence.
-          2. If the AI confidence ≥ ``threshold``, run all deepfake sub-models.
+        Full pipeline: optionally gate on visual classifier confidence,
+        then run all deepfake sub-models.
 
         Args:
             image:             A PIL Image object.
-            visual_classifier: An optional VisualClassifier instance.  When
-                               provided, deepfake analysis is only triggered if
-                               the AI-generated confidence exceeds ``threshold``.
-            threshold:         Confidence threshold above which deepfake analysis
-                               is triggered (default: 0.5).
+            visual_classifier: Optional VisualClassifier instance for gating.
+            threshold:         Confidence threshold for triggering deepfake analysis.
 
         Returns:
             dict with keys ``visual_classification`` and ``deepfake_analysis``.
@@ -157,21 +144,18 @@ class DeepfakeClassifier:
             "deepfake_analysis": None
         }
 
-        # 1. Visual Classifier (optional gate)
-        ai_score = threshold  # default: always run deepfake analysis
+        ai_score = threshold
         if visual_classifier:
             vis_res = visual_classifier.predict(image)
             results["visual_classification"] = vis_res
             ai_score = vis_res["confidence"] if vis_res["prediction"] == "AI Generated" else (1 - vis_res["confidence"])
 
-        # 2. Deepfake sub-models (conditional on AI score)
         if ai_score >= threshold:
             face_res = self.predict_face(image)
             scene_res = self.predict_scene(image)
             landmark_res = self.predict_landmark(image)
 
             has_face = face_res["confidence"] >= 0.90
-            # A landmark is considered present if its label is not Unknown/None and confidence is above a threshold
             has_landmark = landmark_res["label"] not in ["Unknown", "None", "N/A"] and landmark_res.get("confidence", 0.0) >= 0.50
 
             results["deepfake_analysis"] = {
@@ -184,11 +168,6 @@ class DeepfakeClassifier:
 
         return results
 
-
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# Landmark Retrieval Helper Class
-# ---------------------------------------------------------------------------
 
 class LandmarkIndex:
     def __init__(self,
@@ -221,23 +200,19 @@ class LandmarkIndex:
         print("Landmark index loaded successfully.")
 
     def search(self, image, top_k=10, similarity_threshold=0.5):
-        """
-        Searches the FAISS index for the closest landmarks.
-        """
+        """Searches the FAISS index for the closest landmarks."""
         if self.index is None:
             return {"label": "N/A", "confidence": 0.0, "message": "Index not loaded."}
 
         inputs = self.processor(images=image, return_tensors="pt").to(self.device)
         with torch.no_grad():
             outputs = self.model(**inputs)
-            # DINOv2 CLS token
-            embedding = outputs.last_hidden_state[:, 0, :]
+            embedding = outputs.last_hidden_state[:, 0, :]  # CLS token
             embedding = torch.nn.functional.normalize(embedding, p=2, dim=1)
             embedding_np = embedding.cpu().numpy().astype('float32')
 
         distances, indices = self.index.search(embedding_np, top_k)
 
-        # Aggregate matches by landmark ID
         hits = {}
         for dist, idx in zip(distances[0], indices[0]):
             if idx == -1:
@@ -251,7 +226,6 @@ class LandmarkIndex:
         if not hits:
             return {"label": "None", "confidence": 0.0}
 
-        # Return the best landmark candidate based on average similarity of its matches
         best_label = None
         max_avg_sim = -1.0
         for label, sims in hits.items():
