@@ -1,0 +1,11 @@
+filename,expected,base_prediction,base_confidence,base_ai_prob,base_correct,ft_prediction,ft_confidence,ft_ai_prob,ft_correct,cropped_ai_prob,meta_ai_prob,meta_decision,fused_ai_prob,fused_label,fused_correct,has_face,has_place,verdict,verdict_correct
+fake+metadata+place-face.png,AI Generated,AI Generated,0.5713,0.5713,True,Real,0.9375,0.0625,False,,0.99,likely_ai_generated,0.3087,Real,False,False,False,Real,False
+fake+metadata-place+face.png,AI Generated,AI Generated,0.8064,0.8064,True,Real,0.9332,0.06679999999999997,False,0.062000000000000055,0.99,likely_ai_generated,0.3119,Real,False,False,False,Real,False
+fake+metadata-place-face.png,AI Generated,AI Generated,0.836,0.836,True,AI Generated,0.6382,0.6382,True,,0.99,likely_ai_generated,0.7316,AI Generated,True,False,True,Probable Deepfake,True
+fake-metadata+place-face.png,AI Generated,AI Generated,0.5713,0.5713,True,Real,0.9375,0.0625,False,,0.53,uncertain,0.1866,Real,False,False,False,Real,False
+fake-metadata-place+face.png,AI Generated,AI Generated,0.8064,0.8064,True,Real,0.9332,0.06679999999999997,False,0.062000000000000055,0.5,uncertain,0.1818,Real,False,False,False,Real,False
+fake-metadata-place-face.png,AI Generated,AI Generated,0.836,0.836,True,AI Generated,0.6382,0.6382,True,,0.5,uncertain,0.6015,AI Generated,True,False,True,Probable Deepfake,True
+real+metadata+face.jpeg,Real,AI Generated,0.9615,0.9615,False,Real,0.7083,0.29169999999999996,True,0.05510000000000004,0.35,likely_camera_origin,0.3072,Real,True,False,False,Real,True
+real+metadata+place.jpg,Real,AI Generated,0.8915,0.8915,False,Real,0.7017,0.2983,True,,0.5,uncertain,0.3518,Real,True,False,False,Real,True
+real+metadata.jpeg,Real,AI Generated,0.6346,0.6346,False,Real,0.9084,0.09160000000000001,True,,0.35,likely_camera_origin,0.1602,Real,True,False,False,Real,True
+real-metadata.jpeg,Real,AI Generated,0.6346,0.6346,False,Real,0.9084,0.09160000000000001,True,,0.5,uncertain,0.2,Real,True,False,False,Real,True

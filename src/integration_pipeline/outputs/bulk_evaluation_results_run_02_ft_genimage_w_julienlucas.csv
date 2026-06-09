@@ -1,0 +1,11 @@
+filename,expected,base_prediction,base_confidence,base_ai_prob,base_correct,ft_prediction,ft_confidence,ft_ai_prob,ft_correct,cropped_ai_prob,meta_ai_prob,meta_decision,fused_ai_prob,fused_label,fused_correct,has_face,has_place,verdict,verdict_correct
+fake+metadata+place-face.png,AI Generated,Real,0.9906,0.0094,False,AI Generated,0.6636,0.6636,True,,0.99,likely_ai_generated,0.7503,AI Generated,True,False,True,Probable Deepfake,True
+fake+metadata-place+face.png,AI Generated,Real,0.992,0.008,False,Real,0.9031,0.0969,False,0.6006,0.99,likely_ai_generated,0.704,AI Generated,True,True,False,Probable Deepfake,True
+fake+metadata-place-face.png,AI Generated,Real,0.9901,0.0099,False,AI Generated,0.7598,0.7598,True,,0.99,likely_ai_generated,0.8209,AI Generated,True,False,True,Probable Deepfake,True
+fake-metadata+place-face.png,AI Generated,Real,0.9906,0.0094,False,AI Generated,0.6636,0.6636,True,,0.53,uncertain,0.6281,AI Generated,True,False,True,Probable Deepfake,True
+fake-metadata-place+face.png,AI Generated,Real,0.992,0.008,False,Real,0.9031,0.0969,False,0.6006,0.5,uncertain,0.5739,AI Generated,True,True,False,Probable Deepfake,True
+fake-metadata-place-face.png,AI Generated,Real,0.9901,0.0099,False,AI Generated,0.7598,0.7598,True,,0.5,uncertain,0.6908,AI Generated,True,False,True,Probable Deepfake,True
+real+metadata+face.jpeg,Real,Real,0.9921,0.0079,True,Real,0.7305,0.2695,True,0.3221,0.35,likely_camera_origin,0.3295,Real,True,False,False,Real,True
+real+metadata+place.jpg,Real,Real,0.9891,0.0109,True,Real,0.7823,0.2177,True,,0.5,uncertain,0.2926,Real,True,False,False,Real,True
+real+metadata.jpeg,Real,Real,0.9903,0.0097,True,Real,0.6088,0.3912,True,,0.35,likely_camera_origin,0.3803,Real,True,False,False,Real,True
+real-metadata.jpeg,Real,Real,0.9903,0.0097,True,Real,0.6088,0.3912,True,,0.5,uncertain,0.4201,Real,True,False,False,Real,True
